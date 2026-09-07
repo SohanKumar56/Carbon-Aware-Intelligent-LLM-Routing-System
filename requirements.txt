@@ -1,8 +1,8 @@
 # ── Core AI / NLP ─────────────────────────────────────────────────────────────
 --extra-index-url https://download.pytorch.org/whl/cpu
 transformers>=4.48.0
-torch==2.6.0+cpu
-torchvision==0.21.0+cpu
+torch>=2.9.0
+torchvision>=0.21.0
 tokenizers>=0.21.0
 
 # ── Carbon tracking (optional — system degrades gracefully without it) ─────────

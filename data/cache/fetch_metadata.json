@@ -1,0 +1,9 @@
+{
+  "total_prompts": 28465,
+  "datasets": {
+    "wildchat": 20000,
+    "gsm8k": 7473,
+    "supralabs": 992
+  },
+  "cache_dir": "C:\\Projects\\Carbon_Aware_AI_Inference_System_new\\data\\cache"
+}

@@ -49,6 +49,7 @@ from dashboard_utils import (
     GRID_COLOUR,
 )
 from ollama_dashboard import render_dashboard
+from prompt_router_dashboard import render_prompt_router_tab, render_router_stats
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -208,8 +209,8 @@ with st.sidebar:
     st.markdown("### 🧭 Navigation")
     app_mode = st.radio(
         "Select Dashboard", 
-        ["Sentiment Tracker", "Ollama Compare"],
-        help="Switch between the original Carbon-Aware sentiment analysis and the new Ollama model comparison tool."
+        ["Sentiment Tracker", "Ollama Compare", "Prompt Router"],
+        help="Choose between: Sentiment Analysis, Ollama Model Comparison, or Prompt Complexity Routing."
     )
     st.markdown("---")
 
@@ -833,4 +834,9 @@ if app_mode == "Sentiment Tracker":
 
 else:
     # ── OLLAMA COMPARE DASHBOARD ──────────────────────────────────────────────
-    render_dashboard()
+    if app_mode == "Ollama Compare":
+        render_dashboard()
+    elif app_mode == "Prompt Router":
+        # ── PROMPT ROUTER DASHBOARD ───────────────────────────────────────────
+        render_prompt_router_tab()
+        render_router_stats()

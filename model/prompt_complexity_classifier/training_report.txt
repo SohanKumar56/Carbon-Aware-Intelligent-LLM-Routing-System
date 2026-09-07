@@ -1,0 +1,10 @@
+Training Time: 410.03s (6.83 min)
+Accuracy: 0.9320 (93.20%)
+F1 (macro): 0.9271
+Device: Tesla T4
+
+Confusion Matrix:
+           small  medium  large
+small   :  1441     83     21
+medium  :    23   1287    124
+large   :    35    101   2578

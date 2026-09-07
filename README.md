@@ -1,6 +1,11 @@
 # 🌿 Carbon-Aware AI Inference System
 
-A comprehensive sentiment analysis system that compares traditional ML models with local LLMs (via Ollama) while tracking energy consumption, carbon emissions, and performance metrics. The system demonstrates Green AI principles by using an adaptive three-stage pipeline that minimizes energy usage.
+A comprehensive AI system that demonstrates Green AI principles through three main features:
+1. **Sentiment Analysis**: Adaptive three-stage pipeline with energy tracking
+2. **Ollama Model Comparison**: Compare local LLMs side-by-side
+3. **Prompt Complexity Router**: Intelligent routing to appropriately-sized models (93.2% accuracy)
+
+The system tracks energy consumption, carbon emissions, and performance metrics while demonstrating how smart routing can save 30-60% energy without sacrificing quality.
 
 ---
 
@@ -9,26 +14,40 @@ A comprehensive sentiment analysis system that compares traditional ML models wi
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
-- [Traditional Pipeline](#traditional-pipeline)
-- [Ollama Integration](#ollama-integration)
-- [Model Comparison](#model-comparison)
+- [Dashboard 1: Sentiment Tracker](#dashboard-1-sentiment-tracker)
+- [Dashboard 2: Ollama Compare](#dashboard-2-ollama-compare)
+- [Dashboard 3: Prompt Router](#dashboard-3-prompt-router-new)
 - [Energy & Carbon Calculations](#energy--carbon-calculations)
-- [Scoring System](#scoring-system)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
-- [Technical Details](#technical-details)
 - [Examples](#examples)
 
 ---
 
 ## 🎯 Overview
 
-This system performs sentiment analysis (POSITIVE/NEGATIVE/NEUTRAL) on text input using two approaches:
+This system demonstrates **Green AI** principles through three interactive dashboards:
 
-1. **Traditional Pipeline**: A three-stage adaptive system (Rule Engine → RoBERTa → BERT)
-2. **Ollama Models**: Local Large Language Models for comparison
+### Dashboard 1: Sentiment Tracker
+Traditional sentiment analysis (POSITIVE/NEGATIVE/NEUTRAL) using an adaptive three-stage pipeline:
+- **Rule Engine** → **RoBERTa** → **BERT**
+- Compares with local Ollama LLMs
+- Tracks energy consumption and carbon emissions
+
+### Dashboard 2: Ollama Compare  
+Side-by-side comparison of multiple Ollama models:
+- Compare up to 3 models simultaneously
+- Performance, energy, and latency metrics
+- Interactive visualizations
+
+### Dashboard 3: Prompt Router (NEW! ✨)
+Intelligent prompt complexity classification and routing:
+- Classifies prompts as **SMALL** / **MEDIUM** / **LARGE**
+- Routes to appropriately-sized models (1-2B / 3-4B / 7B+ parameters)
+- **93.2% accuracy** with hybrid ML + heuristic rules
+- **30-60% average energy savings** vs always using large models
 
 The system tracks and compares:
 - ⚡ Energy consumption (kWh)
@@ -42,19 +61,67 @@ The system tracks and compares:
 
 ## ✨ Key Features
 
-### 1. **Adaptive Three-Stage Pipeline**
-- Starts with zero-energy rule engine
-- Escalates to small model (RoBERTa) only if needed
-- Falls back to large model (BERT) only for complex cases
-- **Result**: 60-99% energy savings compared to always using BERT
+### 1. **Three Interactive Dashboards**
 
-### 2. **Ollama LLM Integration**
-- Compare up to 3 local Ollama models simultaneously
-- Support for 11 different models (TinyLlama to Qwen 2.5 7B)
-- Real-time confidence generation (no hardcoding)
-- Model-specific timeout handling
+#### Sentiment Tracker
+- Adaptive three-stage pipeline (Rule Engine → RoBERTa → BERT)
+- Compare with up to 3 Ollama models simultaneously
+- Real-time energy and carbon tracking
+- **60-99% energy savings** through intelligent escalation
 
-### 3. **Comprehensive Metrics**
+#### Ollama Compare
+- Side-by-side comparison of 11 Ollama models
+- Support from TinyLlama (0.6GB) to Qwen 2.5 7B (4.7GB)
+- Performance metrics and visualizations
+- No hardcoded confidence values
+
+#### Prompt Router (NEW! ✨)
+- **Pre-inference complexity classification**
+- Routes prompts BEFORE running any LLM
+- **93.2% accuracy** (trained on 28,465 prompts)
+- Hybrid ML + 7 heuristic rules for edge cases
+- **30-60% average energy savings**
+- Transparent rule override indicators
+
+### 2. **Intelligent Routing**
+
+**Philosophy**: Don't waste energy routing every prompt to the biggest model when a smaller one would do the job.
+
+**How it works**:
+```
+User Prompt
+    ↓
+Complexity Classifier (MiniLM-L12, ~10ms)
+    ↓
+    ├─ SMALL (1-2B params)   → 87% energy saved
+    ├─ MEDIUM (3-4B params)  → 50% energy saved
+    └─ LARGE (7B+ params)    → Appropriate for complexity
+```
+
+**Examples**:
+- "What is Python?" → SMALL → TinyLlama (0.6GB)
+- "Write binary search function" → MEDIUM → Qwen 2.5 3B (1.9GB)
+- "Prove √2 is irrational" → LARGE → Qwen 2.5 7B (4.7GB)
+
+### 3. **Hybrid Classification Approach**
+
+**ML Model** (93.2% baseline accuracy):
+- Microsoft MiniLM-L12-H384-uncased (22M params)
+- Trained on 28,465 prompts (WildChat, GSM8K, SupraLabs)
+- Fast CPU inference (~10ms)
+
+**7 Heuristic Rules** (catch edge cases):
+1. Math proofs → LARGE
+2. Very long prompts → upgrade appropriately
+3. Complex reasoning indicators → LARGE
+4. Multi-step tasks → detect and upgrade
+5. Comprehensive code with requirements → LARGE
+6. Research/academic tasks → upgrade
+7. Keep simple prompts simple
+
+**Result**: Better accuracy on edge cases while maintaining speed.
+
+### 4. **Comprehensive Metrics**
 - Energy consumption tracking
 - Carbon footprint calculation
 - Latency measurement
@@ -62,18 +129,13 @@ The system tracks and compares:
 - Green Score (0-100)
 - Overall Score (weighted composite)
 
-### 4. **Interactive Visualizations**
+### 5. **Interactive Visualizations**
 - Energy comparison bar charts
+- Probability distribution charts
 - Stage distribution pie charts
 - Cumulative CO₂ timeline
 - Green Score gauge
 - Model-specific performance charts
-
-### 5. **Fair Comparison**
-- No hardcoded confidence values
-- All models generate their own confidence
-- Transparent error handling
-- Side-by-side metric comparison
 
 ---
 
@@ -82,39 +144,263 @@ The system tracks and compares:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        USER INPUT                            │
-│                    (Text for Analysis)                       │
 └────────────────────┬────────────────────────────────────────┘
                      │
-        ┌────────────┴────────────┐
-        │                         │
-        ▼                         ▼
-┌───────────────┐         ┌──────────────┐
-│  TRADITIONAL  │         │    OLLAMA    │
-│   PIPELINE    │         │    MODELS    │
-└───────┬───────┘         └──────┬───────┘
-        │                        │
-        │                        │
-        ▼                        ▼
-┌─────────────────────────────────────────┐
-│         COMPARISON & ANALYSIS            │
-│  • Energy  • Confidence  • Latency      │
-│  • CO₂     • Green Score • Overall      │
-└─────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────┐
-│      INTERACTIVE DASHBOARD               │
-│  • Metrics  • Charts  • Visualizations  │
-└─────────────────────────────────────────┘
+        ┌────────────┼────────────┐
+        │            │            │
+        ▼            ▼            ▼
+┌───────────────┐ ┌──────────────┐ ┌────────────────┐
+│  SENTIMENT    │ │    OLLAMA    │ │  PROMPT        │
+│  TRACKER      │ │   COMPARE    │ │  ROUTER        │
+└───────┬───────┘ └──────┬───────┘ └────────┬───────┘
+        │                │                   │
+        ▼                ▼                   ▼
+    3-Stage          Model           Complexity
+    Pipeline       Comparison       Classification
+        │                │                   │
+        └────────────────┴───────────────────┘
+                         │
+                         ▼
+        ┌─────────────────────────────────────┐
+        │    ENERGY TRACKING & ANALYSIS        │
+        │  • kWh  • CO₂  • Green Score        │
+        └─────────────────────────────────────┘
+                         │
+                         ▼
+        ┌─────────────────────────────────────┐
+        │      INTERACTIVE DASHBOARD           │
+        │  • Metrics  • Charts  • Insights    │
+        └─────────────────────────────────────┘
+```
+
+### Prompt Router Architecture
+
+```
+User Prompt (Before any LLM inference)
+    ↓
+Complexity Classifier (MiniLM-L12, 22M params)
+    │
+    ├─ ML Model Prediction
+    │   └─ 93.2% accuracy
+    │
+    ├─ Heuristic Rules Check (7 rules)
+    │   ├─ Math proofs → LARGE
+    │   ├─ Long prompts → upgrade
+    │   ├─ Complex reasoning → LARGE
+    │   ├─ Multi-step tasks → upgrade
+    │   ├─ Code with requirements → adjust
+    │   ├─ Academic tasks → upgrade
+    │   └─ Preserve simple prompts
+    │
+    └─ Final Classification
+        ├─ SMALL (1-2B) → 87% energy saved
+        ├─ MEDIUM (3-4B) → 50% energy saved
+        └─ LARGE (7B+) → Appropriate for task
+    ↓
+Routing Recommendation
+    ├─ Primary models
+    ├─ Fallback models
+    └─ Energy savings estimate
 ```
 
 ---
 
-## 🌿 Traditional Pipeline
+## 🎯 Dashboard 3: Prompt Router (NEW!)
+
+### Overview
+
+The **Prompt Complexity Router** classifies prompts **before** running any LLM inference and routes them to appropriately-sized models to minimize energy waste.
+
+**Key Principle**: Don't waste energy routing every prompt to the biggest model when a smaller one would do the job.
+
+### Three Complexity Classes
+
+#### 🟢 SMALL (1-2B parameters)
+**Best for**: Simple factual questions, basic translations, short lookups
+- **Models**: TinyLlama (0.6GB), DeepSeek Coder 1.3B (0.8GB), Qwen 2 1.5B (0.9GB)
+- **Energy**: ~0.00003 kWh/inference
+- **Savings**: 87% vs always using large models
+- **Example**: "What is the capital of France?"
+
+#### 🟡 MEDIUM (3-4B parameters)
+**Best for**: Moderate reasoning, code explanations, summaries
+- **Models**: Qwen 2.5 3B (1.9GB), Phi-3 (2.2GB), Gemma 3 4B (3.3GB)
+- **Energy**: ~0.00010-0.00017 kWh/inference
+- **Savings**: 29-58% vs always using large models
+- **Example**: "Write a Python function to implement binary search"
+
+#### 🔴 LARGE (7B+ parameters)
+**Best for**: Multi-step reasoning, complex math, intricate code
+- **Models**: Qwen 2.5 7B (4.7GB), Zephyr (4.1GB), Qwen 2 (4.4GB)
+- **Energy**: ~0.00024 kWh/inference
+- **Savings**: 0-10% (appropriate for task complexity)
+- **Example**: "Prove that the square root of 2 is irrational using proof by contradiction"
+
+### Classifier Performance
+
+**Model**: Microsoft MiniLM-L12-H384-uncased (22M parameters)
+
+**Training**:
+- **Dataset**: 28,465 prompts from 3 sources
+  - WildChat: 20,000 diverse user prompts
+  - GSM8K: 7,473 math reasoning problems
+  - SupraLabs: 992 pre-labeled routing examples
+- **Device**: Tesla T4 GPU (Google Colab)
+- **Time**: 6.83 minutes
+- **Batch size**: 32 with FP16 precision
+
+**Results**:
+```
+Accuracy: 93.20%
+F1 Score: 0.9271
+
+Confusion Matrix:
+           small  medium  large
+small      1441     83     21   (93.2% correct)
+medium       23   1287    124   (89.7% correct)
+large        35    101   2578   (95.0% correct)
+```
+
+**Inference**: ~10ms on CPU (fast enough for real-time routing)
+
+### Hybrid ML + Rules Approach
+
+The classifier uses a **two-stage approach** for better accuracy:
+
+#### Stage 1: ML Model
+- MiniLM-L12 provides baseline classification
+- 93.2% accuracy on diverse prompts
+- Fast CPU inference
+
+#### Stage 2: Heuristic Rules (7 rules)
+
+1. **Math Proofs → LARGE**
+   - Keywords: prove, proof, theorem, contradiction, induction
+   - Math proofs always upgraded to LARGE
+
+2. **Very Long Prompts**
+   - >120 tokens → LARGE
+   - >100 tokens + SMALL → LARGE
+   - >80 tokens + SMALL → MEDIUM
+
+3. **Complex Reasoning Indicators**
+   - Keywords: explain in detail, comprehensive, step by step, analyze
+   - 2+ signals → upgrade SMALL to LARGE
+   - 3+ signals + MEDIUM → upgrade to LARGE
+
+4. **Multi-Step Tasks**
+   - Keywords: first, then, next, step 1, multiple
+   - 3+ indicators → upgrade SMALL to MEDIUM
+
+5. **Code with Requirements**
+   - Detects: authentication, database, API, testing, deployment
+   - 5+ tech requirements → LARGE
+   - 3+ requirements → upgrade SMALL to LARGE/MEDIUM
+
+6. **Research/Academic Tasks**
+   - Keywords: research, analyze, compare and contrast, evaluate
+   - Academic tasks + SMALL → MEDIUM
+
+7. **Preserve Simple Prompts**
+   - Questions like "What is...", "Define...", "Translate..." stay SMALL
+   - Prevents false upgrades
+
+**Transparency**:
+- When rules trigger, reasoning shows: "🎯 Enhanced by heuristic rules for better accuracy"
+- Confidence adjusted to ≤85% (honest about hybrid approach)
+- `rule_override` flag available in API
+
+### Dashboard Features
+
+1. **Prompt Input**
+   - Quick example selector
+   - Custom prompt input
+   - Real-time classification
+
+2. **Classification Results**
+   - Complexity label (SMALL/MEDIUM/LARGE)
+   - Confidence score (0-100%)
+   - Classification latency
+   - Probability distribution chart
+
+3. **Routing Recommendation**
+   - Primary recommended models
+   - Fallback models
+   - Human-readable reasoning
+   - Model size information
+
+4. **Energy Estimation**
+   - Energy saved vs baseline (always-large)
+   - Green score (0-100)
+   - CO₂ savings estimate
+   - Visual comparison chart
+
+5. **Live Inference (Optional)**
+   - Test with real Ollama models
+   - Real-time performance metrics
+   - Response viewing
+
+### Energy Savings Examples
+
+**Small Prompt**: "What is Python?"
+```
+Classification: SMALL (98% confidence)
+Recommended: TinyLlama (0.6GB)
+Energy: 0.00003 kWh
+Baseline (7B): 0.00024 kWh
+Saved: 0.000203 kWh (87% saved)
+Green Score: 87/100
+```
+
+**Medium Prompt**: "Write a Python function for binary search"
+```
+Classification: MEDIUM (90% confidence)
+Recommended: Qwen 2.5 3B (1.9GB)
+Energy: 0.00010 kWh
+Baseline (7B): 0.00024 kWh
+Saved: 0.000140 kWh (58% saved)
+Green Score: 58/100
+```
+
+**Large Prompt**: "Prove √2 is irrational"
+```
+Classification: LARGE (85% confidence, rule override)
+Recommended: Qwen 2.5 7B (4.7GB)
+Energy: 0.00024 kWh
+Baseline (7B): 0.00024 kWh
+Saved: 0 kWh (0% saved - appropriate!)
+Green Score: 0/100
+```
+
+### Usage Examples
+
+**Command Line**:
+```python
+from complexity_classifier import classify_prompt_complexity, route_to_model
+
+# Simple classification
+complexity = classify_prompt_complexity("What is the capital of France?")
+# Returns: 'small'
+
+# Full routing decision
+result = route_to_model("Explain quantum entanglement")
+print(result)
+# {
+#   'complexity': 'large',
+#   'confidence': 0.94,
+#   'recommended': ['qwen2.5:7b', 'gemma3:4b'],
+#   'reasoning': '...',
+#   'rule_override': False
+# }
+```
+
+**Dashboard**: Navigate to "Prompt Router" from sidebar, enter prompt, click "Classify & Route"
+
+---
+
+## 🌿 Dashboard 1: Sentiment Tracker
 
 ### Three-Stage Adaptive System
-
-The traditional pipeline uses an intelligent escalation strategy to minimize energy consumption:
 
 ```
 ┌──────────────────┐
@@ -225,7 +511,7 @@ Example:
 
 ---
 
-## 🤖 Ollama Integration
+## 🤖 Dashboard 2: Ollama Compare
 
 ### Supported Models
 
@@ -705,6 +991,13 @@ python run_app.py
 
 ### Basic Workflow
 
+#### Dashboard Selection
+After starting the app, select from the sidebar:
+1. **Sentiment Tracker** - Traditional pipeline + Ollama comparison
+2. **Ollama Compare** - Side-by-side model comparison
+3. **Prompt Router** - Complexity classification and routing
+
+#### Sentiment Tracker Workflow
 1. **Enter Text**: Type or select example text
 2. **Select Ollama Models** (optional): Choose up to 3 models
 3. **Run Inference**: Click "⚡ Run Inference"
@@ -712,36 +1005,37 @@ python run_app.py
 5. **Compare Models**: Click rows in comparison table
 6. **Analyze Visualizations**: Review charts and graphs
 
+#### Prompt Router Workflow
+1. **Enter Prompt**: Type or select example
+2. **Classify**: Click "🔍 Classify & Route"
+3. **View Classification**: See complexity (SMALL/MEDIUM/LARGE)
+4. **Check Recommendations**: View suggested models
+5. **See Energy Savings**: Compare vs always-large baseline
+6. **Run Live Inference** (optional): Test with Ollama
+
 ### Example Prompts
 
-#### Simple Sentiment
+#### Sentiment Analysis (Dashboard 1)
 ```
 "This product is amazing and I love it!"
 Expected: POSITIVE (Rule Engine, 100%, 0 ms)
-```
 
-#### Complex Review
-```
 "Setup was complicated, documentation is lacking, and support never 
 responded. The core functionality works, but I'm actively looking 
 for alternatives."
 Expected: NEGATIVE (RoBERTa/BERT, 85-92%, ~450 ms)
 ```
 
-#### Sarcasm (LLM Test)
+#### Prompt Router (Dashboard 3)
 ```
-"Oh wonderful, my third defective unit in a row. Their quality 
-control is just *chef's kiss*"
-Expected: NEGATIVE (Rule Engine catches "defective")
-Note: Small LLMs may miss sarcasm
-```
+SMALL: "What is the capital of France?"
+→ TinyLlama (0.6GB), 87% energy saved
 
-#### Mixed Sentiment
-```
-"The camera quality is phenomenal and the battery life is impressive, 
-but the price is absolutely ridiculous and the customer service was 
-a nightmare."
-Expected: NEGATIVE/NEUTRAL (depends on model)
+MEDIUM: "Write a Python function to implement binary search"
+→ Qwen 2.5 3B (1.9GB), 58% energy saved
+
+LARGE: "Prove that the square root of 2 is irrational using proof by contradiction"
+→ Qwen 2.5 7B (4.7GB), 0% saved (appropriate for complexity)
 ```
 
 ---
@@ -750,24 +1044,52 @@ Expected: NEGATIVE/NEUTRAL (depends on model)
 
 ```
 Carbon-Aware-AI-Inference-system/
-├── app.py                          # Main Streamlit application
+├── app.py                          # Main Streamlit application (3 dashboards)
 ├── config.py                       # Configuration and constants
+│
+├── SENTIMENT TRACKER (Dashboard 1)
 ├── inference_pipeline.py           # Three-stage adaptive pipeline
 ├── model_loader.py                 # Model loading and caching
 ├── rule_engine.py                  # Keyword-based sentiment detection
-├── energy_tracker.py               # Energy and carbon tracking
-├── dashboard_utils.py              # Visualization utilities
+│
+├── OLLAMA COMPARE (Dashboard 2)
 ├── ollama_integration.py           # Ollama API integration
 ├── model_comparison.py             # Model comparison logic
 ├── ollama_dashboard.py             # Ollama-specific dashboard
 ├── ollama_service.py               # Ollama service utilities
 ├── test_ollama.py                  # Ollama testing script
-├── run_app.py                      # Application wrapper
-├── requirements.txt                # Python dependencies
-├── README.md                       # This file
-├── OLLAMA_INTEGRATION.md          # Ollama integration docs
-├── CONFIDENCE_SCORING_UPDATE.md   # Confidence scoring details
-└── .venv/                         # Virtual environment
+│
+├── PROMPT ROUTER (Dashboard 3 - NEW!)
+├── complexity_classifier.py        # ML + heuristic classification
+├── routing_pipeline.py             # Routing with energy tracking
+├── prompt_router_dashboard.py      # Prompt router dashboard UI
+├── test_improvements.py            # Classifier testing script
+│
+├── MODEL & DATA
+├── model/
+│   ├── train_classifier.py        # Training script
+│   └── prompt_complexity_classifier/
+│       ├── config.json             # Model configuration
+│       ├── model.safetensors       # Trained model (133MB)
+│       ├── tokenizer files         # Tokenizer config
+│       └── training_report.txt    # Training metrics
+├── data/
+│   ├── fetch_datasets.py          # Dataset downloader
+│   ├── build_labeled_dataset.py   # Labeling pipeline
+│   ├── cache/                     # Raw datasets (28k prompts)
+│   └── labeled/                   # Final labeled data
+├── eval/
+│   └── routing_validation.py      # Real-world validation
+│
+├── SHARED UTILITIES
+├── energy_tracker.py              # Energy and carbon tracking
+├── dashboard_utils.py             # Visualization utilities
+│
+├── CONFIGURATION
+├── requirements.txt               # Python dependencies
+├── README.md                      # This file
+├── run_app.py                     # Application wrapper
+└── .venv/                        # Virtual environment
 ```
 
 ---

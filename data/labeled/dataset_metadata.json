@@ -1,0 +1,17 @@
+{
+  "total_samples": 28465,
+  "class_distribution": {
+    "large": 14061,
+    "medium": 8232,
+    "small": 6172
+  },
+  "source_distribution": {
+    "wildchat": 20000,
+    "gsm8k": 7473,
+    "supralabs": 992
+  },
+  "original_size": 28465,
+  "balancing_applied": false,
+  "eval_set_size": 800,
+  "llm_judge_used": false
+}
