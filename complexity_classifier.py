@@ -1,10 +1,8 @@
 """
 complexity_classifier.py — Production inference module for prompt complexity classification
 
-This module provides a simple, fast interface for classifying prompt complexity
-and routing to appropriate model sizes (small/medium/large).
-
-Follows the existing repo pattern (similar to rule_engine.py, model_loader.py).
+Provides a fast interface for classifying prompt complexity and routing
+to appropriate Ollama model sizes (small / medium / large).
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Model path
 MODEL_DIR = Path(__file__).parent / "model" / "prompt_complexity_classifier"
 
-# Module-level cache (singleton pattern, like model_loader.py)
+# Module-level cache (singleton pattern — avoids reloading on every call)
 _classifier_cache: Dict[str, any] = {}
 
 

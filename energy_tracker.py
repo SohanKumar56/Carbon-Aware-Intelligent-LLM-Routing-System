@@ -1,44 +1,32 @@
 """
-energy_tracker.py — Energy & carbon footprint estimation.
+energy_tracker.py — Energy & carbon footprint estimation for LLM routing.
 
-We provide two accounting approaches:
+Provides CO₂ accounting for Ollama model inference based on model size.
+Energy is estimated as: model_size_gb × 0.00005 kWh per inference.
 
-1. **Empirical lookup** (always available):
-   Uses pre-measured per-stage energy constants from config.py.
-   Instant, zero-overhead, works offline.
-
-2. **CodeCarbon integration** (optional, soft-import):
-   Wraps the inference call in a real hardware counter via the
-   ``codecarbon`` library.  If the library is not installed the system
-   falls back gracefully to the empirical lookup.
+Optional CodeCarbon integration: if the ``codecarbon`` library is installed,
+real hardware measurements are used instead of estimates.
 
 Public API
 ----------
-estimate_energy(stage)   → dict with energy_kwh, co2_kg, green_score, saved_pct
-measure_with_tracker(fn) → (result, emissions_data) using CodeCarbon if available
+estimate_routing_energy(model_size_gb, baseline_size_gb)
+    → dict with energy_kwh, co2_kg, green_score, energy_saved_pct, energy_saved_kwh
+
+format_energy(kwh)  → human-readable string
+format_co2(kg)      → human-readable string
 """
 
 from __future__ import annotations
-import time
 import logging
 from typing import Callable, Any
 
-from config import (
-    ENERGY_RULE_ENGINE,
-    ENERGY_SMALL_MODEL,
-    ENERGY_LARGE_MODEL,
-    CO2_INTENSITY,
-    GREEN_SCORE_MAX_ENERGY,
-)
+from config import CO2_INTENSITY
 
 logger = logging.getLogger(__name__)
 
-# ── Per-stage energy lookup ────────────────────────────────────────────────────
-_STAGE_ENERGY: dict[str, float] = {
-    "Rule Engine":  ENERGY_RULE_ENGINE,
-    "RoBERTa":      ENERGY_SMALL_MODEL,
-    "BERT":         ENERGY_LARGE_MODEL,
-}
+# ── Energy constant ────────────────────────────────────────────────────────────
+# Estimated kWh per GB of model size for local Ollama inference
+ENERGY_PER_GB = 0.00005  # kWh / GB
 
 # ── Optional CodeCarbon import ─────────────────────────────────────────────────
 try:
@@ -50,57 +38,56 @@ except ImportError:
     logger.info("CodeCarbon not installed — using empirical energy estimates.")
 
 
-def estimate_energy(stage: str) -> dict:
+def estimate_routing_energy(
+    model_size_gb: float,
+    baseline_size_gb: float,
+) -> dict:
     """
-    Return energy/carbon metrics for the given inference stage.
+    Return energy/carbon metrics for a routed Ollama inference.
 
     Parameters
     ----------
-    stage : str
-        One of ``"Rule Engine"``, ``"RoBERTa"``, ``"BERT"``.
+    model_size_gb : float
+        Size of the model actually used (GB).
+    baseline_size_gb : float
+        Size of the always-large baseline model (GB) for savings comparison.
 
     Returns
     -------
     dict
-        energy_kwh   – kilowatt-hours consumed
-        co2_kg       – kilograms of CO₂ equivalent
-        green_score  – 0-100 environmental efficiency score
-        saved_pct    – % energy saved vs always running BERT
-        saved_kwh    – absolute kWh saved
+        energy_kwh        – kilowatt-hours consumed
+        co2_kg            – kilograms of CO₂ equivalent
+        green_score       – 0-100 environmental efficiency score
+        energy_saved_pct  – % energy saved vs always using the baseline
+        energy_saved_kwh  – absolute kWh saved vs baseline
     """
-    energy_kwh = _STAGE_ENERGY.get(stage, ENERGY_LARGE_MODEL)
-    co2_kg     = energy_kwh * CO2_INTENSITY
+    energy_kwh    = model_size_gb * ENERGY_PER_GB
+    baseline_kwh  = baseline_size_gb * ENERGY_PER_GB
+    co2_kg        = energy_kwh * CO2_INTENSITY
 
-    # Green Score: 100 = as good as rule engine; 0 = ran full BERT
-    green_score = max(
-        0,
-        round(100 * (1 - energy_kwh / GREEN_SCORE_MAX_ENERGY)),
-    )
-    green_score = min(green_score, 100)
-
-    saved_kwh  = ENERGY_LARGE_MODEL - energy_kwh
-    saved_pct  = round(100 * saved_kwh / ENERGY_LARGE_MODEL, 1)
+    saved_kwh     = max(0.0, baseline_kwh - energy_kwh)
+    saved_pct     = round(saved_kwh / baseline_kwh * 100, 1) if baseline_kwh > 0 else 0.0
+    green_score   = max(0, min(100, round(100 * (1 - energy_kwh / baseline_kwh)))) if baseline_kwh > 0 else 0
 
     return {
-        "energy_kwh":  energy_kwh,
-        "co2_kg":      co2_kg,
-        "green_score": green_score,
-        "saved_pct":   max(saved_pct, 0.0),
-        "saved_kwh":   max(saved_kwh, 0.0),
+        "energy_kwh":       energy_kwh,
+        "co2_kg":           co2_kg,
+        "green_score":      green_score,
+        "energy_saved_pct": saved_pct,
+        "energy_saved_kwh": saved_kwh,
     }
 
 
 def measure_with_tracker(fn: Callable[[], Any]) -> tuple[Any, dict]:
     """
-    Execute *fn()* inside a CodeCarbon tracker (if available) and return
-    ``(fn_result, emissions_dict)``.
+    Execute *fn()* inside a CodeCarbon tracker (if available).
 
-    Falls back to empirical estimates when CodeCarbon is absent.
+    Falls back gracefully when CodeCarbon is not installed.
 
     Parameters
     ----------
     fn : Callable
-        Zero-argument callable wrapping the inference pipeline.
+        Zero-argument callable wrapping the inference call.
 
     Returns
     -------
@@ -109,14 +96,14 @@ def measure_with_tracker(fn: Callable[[], Any]) -> tuple[Any, dict]:
     """
     if _CODECARBON_AVAILABLE:
         tracker = _CCTracker(
-            project_name="carbon_aware_ai",
+            project_name="carbon_aware_llm_routing",
             measure_power_secs=1,
             log_level="error",
             save_to_file=False,
         )
         tracker.start()
         result = fn()
-        emissions = tracker.stop()          # returns kg CO₂
+        emissions = tracker.stop()   # returns kg CO₂
         energy_kwh = emissions / CO2_INTENSITY if emissions else 0.0
         return result, {
             "energy_kwh": energy_kwh,
@@ -124,13 +111,12 @@ def measure_with_tracker(fn: Callable[[], Any]) -> tuple[Any, dict]:
             "source":     "CodeCarbon",
         }
     else:
-        # No hardware counter — run the function and use lookup tables
         result = fn()
         return result, {"source": "empirical"}
 
 
 def format_energy(kwh: float) -> str:
-    """Human-readable kWh string with appropriate decimal places."""
+    """Human-readable kWh string."""
     return f"{kwh:.6f} kWh"
 
 

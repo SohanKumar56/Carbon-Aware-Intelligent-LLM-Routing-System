@@ -1,12 +1,11 @@
 """
 routing_pipeline.py — Prompt-based routing pipeline with energy tracking
 
-This module provides an alternative to the sentiment-analysis pipeline:
-instead of escalating stage-by-stage, it classifies prompt complexity upfront
-and routes to an appropriately-sized LLM.
+Classifies prompt complexity upfront and routes to an appropriately-sized
+local Ollama LLM to minimise energy waste.
 
-Green AI principle: Don't waste energy routing every prompt to the biggest model
-when a smaller one would do the job.
+Green AI principle: Don't waste energy routing every prompt to the biggest
+model when a smaller one would do the job.
 """
 
 from __future__ import annotations
@@ -16,8 +15,7 @@ from typing import Dict, Optional
 
 from complexity_classifier import classify_prompt_complexity_detailed, get_recommended_models
 from ollama_integration import run_ollama_inference, OLLAMA_MODELS
-from energy_tracker import estimate_energy
-from config import CO2_INTENSITY, ENERGY_LARGE_MODEL
+from config import CO2_INTENSITY
 
 logger = logging.getLogger(__name__)
 
