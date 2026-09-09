@@ -170,6 +170,11 @@ def get_recommended_models(complexity: str) -> Dict[str, list]:
     """
     Get recommended Ollama models for a given complexity level.
     
+    This enforces specific model mapping as per project requirements:
+    - Small → tinyllama:latest (only)
+    - Medium → phi3:latest (only)
+    - Large → qwen2.5:7b (only)
+    
     Parameters
     ----------
     complexity : str
@@ -178,29 +183,30 @@ def get_recommended_models(complexity: str) -> Dict[str, list]:
     Returns
     -------
     dict
-        'primary'   – list of primary recommended models
-        'fallback'  – list of fallback models if primary unavailable
+        'primary'   – list with single forced model
+        'fallback'  – list with same model (no fallbacks)
     
     Examples
     --------
     >>> get_recommended_models('small')
     {
-        'primary': ['tinyllama:latest', 'deepseek-coder:1.3b'],
-        'fallback': ['qwen2:1.5b']
+        'primary': ['tinyllama:latest'],
+        'fallback': ['tinyllama:latest']
     }
     """
+    # Strict model mapping as per requirements
     recommendations = {
         'small': {
-            'primary': ['tinyllama:latest', 'deepseek-coder:1.3b', 'qwen2:1.5b'],
-            'fallback': ['deepseek-r1:1.5b'],
+            'primary': ['tinyllama:latest'],
+            'fallback': ['tinyllama:latest'],
         },
         'medium': {
-            'primary': ['qwen2.5:3b', 'phi3:latest'],
-            'fallback': ['gemma3:4b'],
+            'primary': ['phi3:latest'],
+            'fallback': ['phi3:latest'],
         },
         'large': {
-            'primary': ['qwen2.5:7b', 'gemma3:4b'],
-            'fallback': ['qwen2:latest', 'zephyr:latest'],
+            'primary': ['qwen2.5:7b'],
+            'fallback': ['qwen2.5:7b'],
         },
     }
     

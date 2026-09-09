@@ -6,22 +6,130 @@ local Ollama LLM to minimise energy waste.
 
 Green AI principle: Don't waste energy routing every prompt to the biggest
 model when a smaller one would do the job.
+
+Uses CodeCarbon for real hardware energy measurements.
 """
 
 from __future__ import annotations
 import logging
 import time
+import requests
 from typing import Dict, Optional
 
 from complexity_classifier import classify_prompt_complexity_detailed, get_recommended_models
 from ollama_integration import run_ollama_inference, OLLAMA_MODELS
-from config import CO2_INTENSITY
+from energy_tracker import calculate_metrics
+from config import CO2_INTENSITY, DEFAULT_BASELINE_ENERGY
+from codecarbon import EmissionsTracker
 
 logger = logging.getLogger(__name__)
 
 # Baseline for comparison (always using largest model)
 BASELINE_MODEL = "qwen2.5:7b"
-BASELINE_ENERGY = OLLAMA_MODELS.get(BASELINE_MODEL, {}).get("size", 4.7) * 0.00005
+
+
+def measure_baseline_energy(model_id: str) -> float:
+    """
+    Measure actual baseline energy consumption using CodeCarbon.
+    
+    Parameters
+    ----------
+    model_id : str
+        Model to measure (typically the large baseline model)
+    
+    Returns
+    -------
+    float
+        Energy consumption in kWh, or 0.0 if measurement fails
+    """
+    try:
+        # Check if Ollama is available first
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code != 200:
+            logger.warning("Ollama not available - using default baseline energy")
+            return DEFAULT_BASELINE_ENERGY
+        
+        # Simple test inference to measure baseline
+        test_prompt = "Test prompt for baseline energy measurement"
+        
+        def baseline_inference():
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": model_id,
+                    "prompt": test_prompt,
+                    "stream": False,
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            return response.json()
+        
+        tracker = EmissionsTracker(
+            project_name="baseline_measurement",
+            measure_power_secs=1,
+            log_level="error",
+            save_to_file=False,
+        )
+        
+        tracker.start()
+        baseline_inference()
+        emissions = tracker.stop()
+        
+        # Calculate energy from emissions
+        co2_kg = emissions if emissions else 0.0
+        energy_kwh = co2_kg / CO2_INTENSITY if co2_kg > 0 else 0.0
+        
+        logger.info(f"Baseline energy measured: {energy_kwh:.6f} kWh for {model_id}")
+        return energy_kwh
+        
+    except requests.exceptions.ConnectionError:
+        logger.warning("Cannot connect to Ollama - using default baseline energy")
+        return DEFAULT_BASELINE_ENERGY
+    except requests.exceptions.Timeout:
+        logger.warning("Ollama request timeout - using default baseline energy")
+        return DEFAULT_BASELINE_ENERGY
+    except Exception as e:
+        logger.warning(f"Baseline measurement failed: {e} - using default baseline energy")
+        return DEFAULT_BASELINE_ENERGY
+
+
+# Cache baseline energy measurement
+_baseline_energy_cache = None
+
+def get_baseline_energy() -> float:
+    """Get baseline energy consumption (cached or measured)."""
+    global _baseline_energy_cache
+    
+    if _baseline_energy_cache is not None:
+        return _baseline_energy_cache
+    
+    # Use default baseline initially to avoid blocking startup
+    # Will be measured on first successful inference
+    _baseline_energy_cache = DEFAULT_BASELINE_ENERGY
+    logger.info(f"Using default baseline energy: {DEFAULT_BASELINE_ENERGY:.6f} kWh")
+    return _baseline_energy_cache
+
+
+def update_baseline_energy_if_successful() -> None:
+    """Attempt to measure actual baseline energy if Ollama is available in background."""
+    global _baseline_energy_cache
+    
+    # Only try to update if we're currently using the default
+    if _baseline_energy_cache != DEFAULT_BASELINE_ENERGY:
+        return  # Already have a measured value
+    
+    try:
+        # Check if Ollama is available with very short timeout
+        response = requests.get("http://localhost:11434/api/tags", timeout=1)
+        if response.status_code == 200:
+            logger.info("Ollama available - attempting to measure actual baseline energy")
+            actual_baseline = measure_baseline_energy(BASELINE_MODEL)
+            if actual_baseline > 0 and actual_baseline != DEFAULT_BASELINE_ENERGY:
+                _baseline_energy_cache = actual_baseline
+                logger.info(f"Updated baseline energy to measured value: {actual_baseline:.6f} kWh")
+    except Exception as e:
+        logger.debug(f"Could not measure actual baseline energy: {e}, using default")
 
 
 def run_routing_pipeline(
@@ -34,8 +142,8 @@ def run_routing_pipeline(
     
     Workflow:
     1. Classify prompt complexity
-    2. Route to appropriate model size
-    3. Run inference
+    2. Route to appropriate model size (forced mapping)
+    3. Run inference automatically
     4. Track energy vs baseline (always using large model)
     
     Parameters
@@ -44,10 +152,10 @@ def run_routing_pipeline(
         User input prompt
     selected_models : dict, optional
         Manual model selection per complexity level:
-        {'small': 'tinyllama:latest', 'medium': 'qwen2.5:3b', 'large': 'qwen2.5:7b'}
-        If None, uses recommended defaults
+        {'small': 'tinyllama:latest', 'medium': 'phi3:latest', 'large': 'qwen2.5:7b'}
+        If None, uses forced defaults as per requirements
     auto_route : bool
-        If True, automatically routes based on classification.
+        If True, automatically routes and runs inference.
         If False, returns routing recommendation without running inference.
     
     Returns
@@ -77,14 +185,10 @@ def run_routing_pipeline(
     
     logger.info(f"Classified as '{complexity}' (confidence: {confidence:.2%})")
     
-    # Step 2: Get model recommendation
-    if selected_models and complexity in selected_models:
-        routed_model = selected_models[complexity]
-        logger.info(f"Using manually selected model: {routed_model}")
-    else:
-        recommendations = get_recommended_models(complexity)
-        routed_model = recommendations['primary'][0]
-        logger.info(f"Recommended model: {routed_model}")
+    # Step 2: Get forced model recommendation (no manual override allowed)
+    recommendations = get_recommended_models(complexity)
+    routed_model = recommendations['primary'][0]
+    logger.info(f"Routed to forced model: {routed_model}")
     
     # Generate routing reasoning
     reasoning = _generate_routing_reasoning(complexity, confidence, routed_model)
@@ -109,19 +213,25 @@ def run_routing_pipeline(
     
     inference_result = run_ollama_inference(routed_model, prompt, timeout=timeout)
     
-    # Step 4: Calculate metrics
+    # Update baseline energy measurement if inference was successful
+    if not inference_result.get('error'):
+        update_baseline_energy_if_successful()
+    
+    # Step 4: Calculate metrics using CodeCarbon measurements
     total_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
     
-    # Energy calculation
+    # Energy calculation (uses real hardware measurements from CodeCarbon)
     energy_kwh = inference_result.get('energy_kwh', 0)
-    co2_kg = energy_kwh * CO2_INTENSITY
     
-    # Energy savings vs baseline (always using large model)
-    energy_saved = BASELINE_ENERGY - energy_kwh
-    energy_saved_pct = (energy_saved / BASELINE_ENERGY * 100) if BASELINE_ENERGY > 0 else 0
+    # Get baseline energy (measured or cached)
+    baseline_energy = get_baseline_energy()
     
-    # Green score (0-100, higher is better)
-    green_score = max(0, min(100, round(100 * (1 - energy_kwh / BASELINE_ENERGY))))
+    # Calculate all energy/carbon metrics using the centralized function
+    metrics = calculate_metrics(energy_kwh, baseline_energy)
+    co2_kg = metrics['co2_kg']
+    energy_saved = metrics['energy_saved_kwh']
+    energy_saved_pct = metrics['energy_saved_pct']
+    green_score = metrics['green_score']
     
     # Compile results
     result = {
@@ -140,7 +250,7 @@ def run_routing_pipeline(
         'energy_saved_pct': max(0, energy_saved_pct),
         'green_score': green_score,
         'baseline_model': BASELINE_MODEL,
-        'baseline_energy': BASELINE_ENERGY,
+        'baseline_energy': baseline_energy,  # Now using measured baseline
         'reasoning': reasoning,
         'all_probs': classification['all_probs'],
     }
@@ -211,30 +321,35 @@ def compare_routing_strategies(
         logger.info(f"\nTesting strategy: {strategy}")
         
         if strategy == 'smart':
-            # Smart routing (our classifier)
+            # Smart routing (our classifier with forced models)
             result = run_routing_pipeline(prompt)
             
         elif strategy == 'always_small':
-            # Always route to smallest model
-            result = run_routing_pipeline(
-                prompt,
-                selected_models={
-                    'small': 'tinyllama:latest',
-                    'medium': 'tinyllama:latest',
-                    'large': 'tinyllama:latest'
-                }
-            )
+            # Always route to smallest model (manually override classification)
+            # Temporarily modify recommendations for this test
+            from complexity_classifier import get_recommended_models
+            original_recs = get_recommended_models
+            def always_small_recs(complexity):
+                return {'primary': ['tinyllama:latest'], 'fallback': ['tinyllama:latest']}
+            # Monkey patch for this test
+            import complexity_classifier
+            complexity_classifier.get_recommended_models = always_small_recs
+            result = run_routing_pipeline(prompt)
+            # Restore original
+            complexity_classifier.get_recommended_models = original_recs
             
         elif strategy == 'always_large':
             # Always route to largest model (baseline)
-            result = run_routing_pipeline(
-                prompt,
-                selected_models={
-                    'small': BASELINE_MODEL,
-                    'medium': BASELINE_MODEL,
-                    'large': BASELINE_MODEL
-                }
-            )
+            from complexity_classifier import get_recommended_models
+            original_recs = get_recommended_models
+            def always_large_recs(complexity):
+                return {'primary': ['qwen2.5:7b'], 'fallback': ['qwen2.5:7b']}
+            # Monkey patch for this test
+            import complexity_classifier
+            complexity_classifier.get_recommended_models = always_large_recs
+            result = run_routing_pipeline(prompt)
+            # Restore original
+            complexity_classifier.get_recommended_models = original_recs
         
         results[strategy] = result
     

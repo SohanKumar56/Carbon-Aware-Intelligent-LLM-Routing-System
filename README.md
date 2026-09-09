@@ -53,9 +53,9 @@ DeepSeek 1.3B     Phi-3              Gemma3 4B
 | `app.py` | Streamlit entry point — renders the two dashboards |
 | `complexity_classifier.py` | Loads the fine-tuned MiniLM model, runs classification, applies 7 heuristic override rules |
 | `routing_pipeline.py` | Orchestrates: classify → select Ollama model → run inference → compute energy savings |
-| `ollama_integration.py` | Calls the local Ollama server, parses responses, estimates energy per model size |
+| `ollama_integration.py` | Calls the local Ollama server, parses responses, measures energy via CodeCarbon |
 | `ollama_service.py` | Manages the Ollama process (auto-start, health check, model list) |
-| `energy_tracker.py` | Computes kWh, CO₂, green score, and energy saved vs baseline |
+| `energy_tracker.py` | Computes kWh, CO₂, green score using CodeCarbon measurements |
 | `config.py` | Central constants: CO₂ intensity, page settings |
 | `prompt_router_dashboard.py` | Streamlit UI for the Prompt Router tab |
 | `ollama_dashboard.py` | Streamlit UI for the Multi-Model Compare tab |
@@ -152,13 +152,9 @@ The **baseline** is always running `qwen2.5:7b`. All energy savings are computed
 
 ## Energy & Carbon Tracking
 
-### Energy Estimation
+### Energy Measurement
 
-Ollama model energy is estimated by model size:
-
-```
-energy_kwh = model_size_gb × 0.00005
-```
+Ollama model energy consumption is measured using **CodeCarbon** for real hardware energy tracking. CodeCarbon is **required** for this system to function - it provides actual power consumption measurements from your hardware during inference.
 
 ### CO₂ Calculation
 
@@ -177,9 +173,9 @@ green_score = 100 × (1 − energy_used / baseline_energy)
 - **100** = used a tiny model, maximum savings
 - **0** = used the full 7B baseline
 
-### CodeCarbon (optional)
+### CodeCarbon (required)
 
-If the `codecarbon` library is installed, real hardware measurements replace the estimates. The system detects it automatically and falls back to estimates if it's absent.
+The `codecarbon` library is **required** for energy and carbon measurements. It provides real hardware tracking instead of estimates, ensuring accurate carbon footprint calculations for your specific hardware setup.
 
 ---
 
@@ -218,7 +214,7 @@ Carbon-Aware-Intelligent-LLM-Routing-System/
 ├── complexity_classifier.py        # MiniLM inference + heuristic rules
 ├── routing_pipeline.py             # classify → route → infer → metrics
 │
-├── ollama_integration.py           # Ollama API calls + energy estimates
+├── ollama_integration.py           # Ollama API calls + CodeCarbon energy measurements
 ├── ollama_service.py               # Ollama process management
 │
 ├── prompt_router_dashboard.py      # Streamlit UI: Prompt Router tab
@@ -261,6 +257,8 @@ Carbon-Aware-Intelligent-LLM-Routing-System/
 - Python 3.8+
 - 4 GB RAM minimum (8 GB recommended for 7B models)
 - [Ollama](https://ollama.com/download) installed
+- **CodeCarbon** (required for energy/carbon measurements)
+- **Optional:** PySpark 3.5+ for distributed preprocessing
 
 ### 1. Clone and create virtual environment
 
@@ -275,7 +273,24 @@ python -m venv .venv
 ### 2. Install Python dependencies
 
 ```powershell
+# Standard installation
 pip install -r requirements.txt
+
+# Includes PySpark for distributed preprocessing
+# (Already included in requirements.txt)
+```
+
+### 2a. Optional: Run PySpark Preprocessing
+
+```powershell
+# Run distributed data preprocessing (5x faster than Pandas)
+cd data
+python build_labeled_dataset_spark.py
+
+# Benchmark Pandas vs PySpark
+python compare_pandas_vs_spark.py
+
+# See SPARK_PREPROCESSING_GUIDE.md for details
 ```
 
 ### 3. Install Ollama and pull models
@@ -326,7 +341,8 @@ Ollama starts automatically if it's installed. If it's not running, the Ollama C
 | Local LLMs | Ollama |
 | Visualisation | Plotly |
 | Data | Pandas, Parquet |
-| Carbon tracking (optional) | CodeCarbon |
+| **Distributed Processing** | **PySpark 3.5+ (NEW! 🚀)** |
+| Carbon tracking (required) | CodeCarbon |
 | Model format | SafeTensors |
 
 ---

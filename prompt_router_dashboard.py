@@ -4,7 +4,7 @@ prompt_router_dashboard.py — Streamlit dashboard for Prompt Complexity Router
 Provides an interactive interface for:
 1. Classifying prompt complexity
 2. Getting model routing recommendations
-3. Viewing estimated energy savings
+3. Viewing measured energy savings
 4. Comparing routing strategies
 """
 
@@ -12,22 +12,32 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 from complexity_classifier import route_to_model, classify_prompt_complexity_detailed
-from routing_pipeline import run_routing_pipeline, BASELINE_MODEL, BASELINE_ENERGY
+from routing_pipeline import run_routing_pipeline, BASELINE_MODEL
 from ollama_integration import OLLAMA_MODELS, check_ollama_availability
 import pandas as pd
+from datetime import datetime
 
 
 def render_prompt_router_tab():
     """Render the Prompt Router tab in the dashboard."""
     
-    st.header("🎯 Prompt Complexity Router")
-    st.markdown("""
-    This router classifies prompt complexity **before** running inference,
-    routing to appropriately-sized models to minimize energy waste.
+    # Initialize session state for history
+    if 'processing_history' not in st.session_state:
+        st.session_state['processing_history'] = []
     
-    **Philosophy**: Don't waste energy routing every prompt to the biggest model
-    when a smaller one would do the job.
-    """)
+    # Custom header with leaf logo and system title
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 0;">
+        <h1 style="font-size: 3rem; font-weight: bold; margin: 0.5rem 0; color: #f1f5f9;">
+            🌿 Carbon-Aware Intelligent LLM Routing System
+        </h1>
+        <p style="font-size: 1.1rem; color: #94a3b8; margin: 1rem 0; line-height: 1.6;">
+            Classifies prompt complexity and routes to appropriately-sized models to minimize energy waste.<br>
+            Reduces carbon emissions by using smaller models when appropriate without sacrificing quality.<br>
+            Smart routing that saves energy while maintaining optimal performance.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Input section
     st.subheader("📝 Enter Your Prompt")
@@ -66,34 +76,47 @@ def render_prompt_router_tab():
             key="router_prompt_custom"
         )
     
-    # Classification button
-    if st.button("🔍 Classify & Route", type="primary", use_container_width=True):
+    # Classification button (now automatic inference)
+    if st.button("🔍 Classify & Auto-Process", type="primary", use_container_width=True):
         if not prompt.strip():
             st.warning("Please enter a prompt first!")
             return
         
-        with st.spinner("Classifying prompt complexity..."):
-            # Get routing recommendation
-            routing = route_to_model(prompt)
+        # Check Ollama availability first
+        ollama_available = check_ollama_availability()
+        if not ollama_available:
+            st.error("⚠️ Ollama is not running. Please start Ollama first with 'ollama serve'")
+            return
+        
+        with st.spinner("Classifying prompt complexity and running automatic inference..."):
+            # Run full pipeline with automatic inference
+            result = run_routing_pipeline(prompt, auto_route=True)
             
-            # Store in session state for later use
-            st.session_state['routing_result'] = routing
+            # Add timestamp
+            result['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            result['prompt_preview'] = prompt[:100] + "..." if len(prompt) > 100 else prompt
+            
+            # Store in session state for analytics
+            st.session_state['pipeline_result'] = result
             st.session_state['current_prompt'] = prompt
+            
+            # Add to history
+            st.session_state['processing_history'].append(result)
     
     # Display results if available
-    if 'routing_result' in st.session_state:
-        routing = st.session_state['routing_result']
+    if 'pipeline_result' in st.session_state:
+        result = st.session_state['pipeline_result']
         prompt = st.session_state['current_prompt']
         
         st.markdown("---")
         
-        # Classification results
+        # === CLASSIFICATION RESULTS ===
         st.subheader("📊 Classification Results")
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            complexity = routing['complexity']
+            complexity = result['complexity']
             color = {
                 'small': '🟢',
                 'medium': '🟡',
@@ -106,7 +129,7 @@ def render_prompt_router_tab():
             )
         
         with col2:
-            confidence = routing['confidence']
+            confidence = result['confidence']
             conf_pct = f"{confidence:.1%}"
             st.metric(
                 "Confidence",
@@ -116,165 +139,434 @@ def render_prompt_router_tab():
         
         with col3:
             st.metric(
-                "Latency",
-                f"{routing['latency_ms']:.0f} ms",
+                "Classification Latency",
+                f"{result['classification_latency_ms']:.0f} ms",
                 delta=None
             )
         
         with col4:
-            recommended_model = routing['recommended'][0]
-            model_info = OLLAMA_MODELS.get(recommended_model, {})
-            model_size = model_info.get('size', 0)
+            model_name = result['model_name']
             st.metric(
-                "Recommended",
-                f"{model_size:.1f}GB",
+                "Routed Model",
+                model_name,
                 delta=None
             )
         
-        # Probability breakdown
+        # === PROBABILITY CHARTS ===
         st.subheader("📈 Complexity Probability Distribution")
         
-        probs = routing['all_probs']
+        probs = result['all_probs']
         prob_df = pd.DataFrame({
             'Complexity': list(probs.keys()),
             'Probability': [v * 100 for v in probs.values()]
         })
         
-        fig = px.bar(
-            prob_df,
-            x='Complexity',
-            y='Probability',
-            color='Complexity',
-            color_discrete_map={
-                'small': '#10b981',
-                'medium': '#f59e0b',
-                'large': '#ef4444'
-            },
-            title="Complexity Classification Confidence"
-        )
-        fig.update_layout(
-            showlegend=False,
-            yaxis_title="Probability (%)",
-            height=300
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # Create side-by-side layout for charts
+        chart_col1, chart_col2 = st.columns(2)
         
-        # Routing recommendation
-        st.subheader("🚀 Routing Recommendation")
+        with chart_col1:
+            # Create pie chart
+            fig_pie = px.pie(
+                prob_df,
+                values='Probability',
+                names='Complexity',
+                color='Complexity',
+                color_discrete_map={
+                    'small': '#10b981',
+                    'medium': '#f59e0b',
+                    'large': '#ef4444'
+                },
+                title="Complexity Classification Probability"
+            )
+            fig_pie.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_pie, use_container_width=True)
         
-        st.info(f"**Reasoning:** {routing['reasoning']}")
+        with chart_col2:
+            # Create bar chart
+            fig_bar = px.bar(
+                prob_df,
+                x='Complexity',
+                y='Probability',
+                color='Complexity',
+                color_discrete_map={
+                    'small': '#10b981',
+                    'medium': '#f59e0b',
+                    'large': '#ef4444'
+                },
+                title="Probability Breakdown"
+            )
+            fig_bar.update_layout(
+                showlegend=False,
+                yaxis_title="Probability (%)",
+                height=250,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
         
-        col1, col2 = st.columns(2)
+        # === ROUTING REASONING ===
+        st.subheader("🚀 Routing Decision")
         
-        with col1:
-            st.markdown("**Primary Models:**")
-            for model in routing['recommended'][:3]:
-                model_info = OLLAMA_MODELS.get(model, {})
-                st.markdown(f"- `{model_info.get('name', model)}` ({model_info.get('size', 0):.1f}GB)")
+        st.info(f"**Reasoning:** {result['reasoning']}")
         
-        with col2:
-            st.markdown("**Fallback Models:**")
-            for model in routing['fallback'][:3]:
-                model_info = OLLAMA_MODELS.get(model, {})
-                st.markdown(f"- `{model_info.get('name', model)}` ({model_info.get('size', 0):.1f}GB)")
+        # === INFERENCE RESULTS ===
+        st.markdown("---")
+        st.subheader("🤖 Inference Results")
         
-        # Energy estimation
-        st.subheader("💚 Estimated Energy Savings")
+        if result.get('error'):
+            st.error(f"❌ Error during inference: {result['error']}")
+        else:
+            # Performance metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Total Latency",
+                    f"{result['total_latency_ms']:.0f} ms",
+                    delta=None
+                )
+            
+            with col2:
+                st.metric(
+                    "Inference Latency",
+                    f"{result['inference_latency_ms']:.0f} ms",
+                    delta=None
+                )
+            
+            with col3:
+                st.metric(
+                    "Energy Used",
+                    f"{result['energy_kwh']*1000:.3f} mWh",
+                    delta=None
+                )
+            
+            with col4:
+                st.metric(
+                    "CO₂ Emitted",
+                    f"{result['co2_kg']*1000:.3f} mg",
+                    delta=None
+                )
+            
+            # Why this model was chosen
+            st.markdown("---")
+            st.subheader("💡 Why This Model Was Chosen")
+            
+            model_explanation = f"""
+            **Model**: {result['model_name']} ({OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0):.1f} GB)
+            
+            **Complexity Match**: The prompt was classified as **{result['complexity'].upper()}** complexity, which matches perfectly with this model's capabilities.
+            
+            **Energy Efficiency**: This model consumed **{result['energy_kwh']*1000:.3f} mWh** of energy, saving **{result['energy_saved_pct']:.1f}%** compared to using the large baseline model.
+            
+            **Environmental Impact**: Generated **{result['co2_kg']*1000:.3f} mg** of CO₂ emissions with a Green Score of **{result['green_score']}/100**.
+            
+            **Performance**: Completed in **{result['total_latency_ms']:.0f} ms** total latency.
+            """
+            st.info(model_explanation)
         
-        recommended_model = routing['recommended'][0]
-        model_info = OLLAMA_MODELS.get(recommended_model, {})
-        routed_energy = model_info.get('size', 0) * 0.00005
+        # === ENERGY ANALYTICS ===
+        st.markdown("---")
+        st.subheader("💚 Energy & Carbon Analytics")
         
-        baseline_model_info = OLLAMA_MODELS.get(BASELINE_MODEL, {})
-        baseline_energy = BASELINE_ENERGY
-        
-        energy_saved = baseline_energy - routed_energy
-        energy_saved_pct = (energy_saved / baseline_energy * 100) if baseline_energy > 0 else 0
-        green_score = max(0, min(100, round(100 * (1 - routed_energy / baseline_energy))))
-        
+        # Energy savings metrics
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.metric(
                 "Energy Saved",
-                f"{energy_saved*1000:.3f} mWh",
-                delta=f"{energy_saved_pct:.0f}% saved"
+                f"{result['energy_saved_kwh']*1000:.3f} mWh",
+                delta=f"{result['energy_saved_pct']:.0f}% saved"
             )
         
         with col2:
             st.metric(
                 "Green Score",
-                f"{green_score}/100",
-                delta="Excellent" if green_score > 75 else ("Good" if green_score > 50 else "Fair")
+                f"{result['green_score']}/100",
+                delta="Excellent" if result['green_score'] > 75 else ("Good" if result['green_score'] > 50 else "Fair")
             )
         
         with col3:
-            co2_saved = energy_saved * 0.475
+            co2_saved = result['energy_saved_kwh'] * 0.475
             st.metric(
                 "CO₂ Saved",
                 f"{co2_saved*1000:.3f} mg",
                 delta=None
             )
         
-        # Comparison chart
-        st.subheader("📊 Energy Comparison")
+        # === ENERGY DISTRIBUTION CHART ===
+        st.subheader("📊 Energy Distribution")
         
-        comparison_df = pd.DataFrame({
-            'Strategy': ['Smart Routing\n(Recommended)', 'Always Large\n(Baseline)'],
-            'Energy (mWh)': [routed_energy * 1000, baseline_energy * 1000],
-            'Model': [model_info.get('name', recommended_model), baseline_model_info.get('name', BASELINE_MODEL)]
+        # Pie chart for energy distribution
+        energy_pie_df = pd.DataFrame({
+            'Source': ['Used Energy', 'Saved Energy'],
+            'Energy (mWh)': [result['energy_kwh']*1000, result['energy_saved_kwh']*1000]
         })
         
-        fig = px.bar(
-            comparison_df,
-            x='Strategy',
-            y='Energy (mWh)',
-            color='Strategy',
-            text='Model',
+        fig_energy_pie = px.pie(
+            energy_pie_df,
+            values='Energy (mWh)',
+            names='Source',
+            color='Source',
             color_discrete_map={
-                'Smart Routing\n(Recommended)': '#10b981',
-                'Always Large\n(Baseline)': '#ef4444'
+                'Used Energy': '#ef4444',
+                'Saved Energy': '#10b981'
             },
-            title="Energy Usage: Smart Routing vs Always-Large Baseline"
+            title="Energy Distribution: Used vs Saved"
         )
-        fig.update_traces(textposition='outside')
-        fig.update_layout(showlegend=False, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        fig_energy_pie.update_layout(height=400)
+        st.plotly_chart(fig_energy_pie, use_container_width=True)
         
-        # Run inference section (optional)
+        # === COMPARISON OPTION ===
         st.markdown("---")
-        st.subheader("🤖 Run Live Inference (Optional)")
+        st.subheader("� Compare with Other Models")
         
-        ollama_available = check_ollama_availability()
+        # Initialize comparison state
+        if 'comparison_mode' not in st.session_state:
+            st.session_state['comparison_mode'] = False
+        if 'selected_compare_models' not in st.session_state:
+            st.session_state['selected_compare_models'] = []
+        if 'comparison_results' not in st.session_state:
+            st.session_state['comparison_results'] = None
         
-        if not ollama_available:
-            st.warning("⚠️ Ollama is not running. Start Ollama to test live inference.")
-        else:
-            st.info("✅ Ollama is running! You can test live inference with the recommended model.")
+        # Compare button
+        if st.button("🔀 Compare with Other Models", key="compare_button"):
+            st.session_state['comparison_mode'] = not st.session_state['comparison_mode']
+        
+        # Show comparison options when in comparison mode
+        if st.session_state['comparison_mode']:
+            st.markdown("Select models to compare with:")
             
-            if st.button("▶️ Run Inference on Recommended Model", use_container_width=True):
-                with st.spinner(f"Running inference on {model_info.get('name', recommended_model)}..."):
-                    result = run_routing_pipeline(prompt, auto_route=True)
-                    
-                    if result.get('error'):
-                        st.error(f"Error: {result['error']}")
+            # Available models for comparison
+            comparison_models = {
+                'small': {'name': 'Small → tinyllama', 'model_id': 'tinyllama:latest'},
+                'medium': {'name': 'Medium → phi3', 'model_id': 'phi3:latest'},
+                'large': {'name': 'Large → qwen2.5:7b', 'model_id': 'qwen2.5:7b'}
+            }
+            
+            # Get the current model's complexity
+            current_model_id = result['routed_model']
+            
+            # Show checkboxes for models to compare
+            selected_models = []
+            for complexity, model_info in comparison_models.items():
+                if model_info['model_id'] == current_model_id:
+                    st.checkbox(f"✓ {model_info['name']} (Already Used)", value=True, disabled=True, key=f"compare_{complexity}")
+                else:
+                    if st.checkbox(model_info['name'], key=f"compare_{complexity}"):
+                        selected_models.append(model_info['model_id'])
+            
+            # Run comparison button
+            if st.button("▶️ Run Comparison", type="primary", key="run_comparison"):
+                if selected_models:
+                    with st.spinner("Running comparison with selected models..."):
+                        # Store current prompt for comparison
+                        st.session_state['compare_prompt'] = prompt
+                        st.session_state['selected_compare_models'] = selected_models
+                        
+                        # Run comparison
+                        comparison_results = []
+                        for model_id in selected_models:
+                            from ollama_integration import run_ollama_inference
+                            model_info = OLLAMA_MODELS.get(model_id, {})
+                            timeout = model_info.get('timeout', 120)
+                            
+                            try:
+                                comp_result = run_ollama_inference(model_id, prompt, timeout=timeout)
+                                comparison_results.append({
+                                    'model_id': model_id,
+                                    'model_name': model_info.get('name', model_id),
+                                    'size_gb': model_info.get('size', 0),
+                                    'energy_kwh': comp_result.get('energy_kwh', 0),
+                                    'co2_kg': comp_result.get('co2_kg', 0),
+                                    'latency_ms': comp_result.get('latency_ms', 0),
+                                    'response': comp_result.get('raw_response', ''),
+                                    'error': comp_result.get('error')
+                                })
+                            except Exception as e:
+                                comparison_results.append({
+                                    'model_id': model_id,
+                                    'model_name': model_info.get('name', model_id),
+                                    'size_gb': model_info.get('size', 0),
+                                    'energy_kwh': 0,
+                                    'co2_kg': 0,
+                                    'latency_ms': 0,
+                                    'response': '',
+                                    'error': str(e)
+                                })
+                        
+                        st.session_state['comparison_results'] = comparison_results
+                        st.success("Comparison completed!")
+                else:
+                    st.warning("Please select at least one model to compare.")
+        
+        # Show comparison results if available
+        if st.session_state.get('comparison_results') and st.session_state['comparison_mode']:
+            st.markdown("---")
+            st.subheader("📋 Model Comparison Results")
+            
+            # Build comparison table
+            comparison_data = {
+                'Metric': [
+                    'Model Used',
+                    'Model Size (GB)',
+                    'Inference Latency (ms)',
+                    'Energy Used (mWh)',
+                    'CO₂ Emitted (mg)'
+                ],
+                'Current Model': [
+                    result['model_name'],
+                    f"{OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0):.1f}",
+                    f"{result['inference_latency_ms']:.1f}",
+                    f"{result['energy_kwh']*1000:.3f}",
+                    f"{result['co2_kg']*1000:.3f}"
+                ]
+            }
+            
+            # Add comparison models to table
+            for comp_result in st.session_state['comparison_results']:
+                comparison_data[comp_result['model_name']] = [
+                    comp_result['model_name'],
+                    f"{comp_result['size_gb']:.1f}",
+                    f"{comp_result['latency_ms']:.1f}",
+                    f"{comp_result['energy_kwh']*1000:.3f}",
+                    f"{comp_result['co2_kg']*1000:.3f}"
+                ]
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            
+            # Show efficiency analysis for compared models
+            st.markdown("### 📝 Model Efficiency Analysis")
+            for comp_result in st.session_state['comparison_results']:
+                with st.expander(f"Efficiency Analysis for {comp_result['model_name']}"):
+                    if comp_result.get('error'):
+                        st.error(f"Error: {comp_result['error']}")
                     else:
-                        st.success("✅ Inference complete!")
+                        # Efficiency analysis
+                        energy_diff = comp_result['energy_kwh'] - result['energy_kwh']
+                        energy_diff_pct = (energy_diff / result['energy_kwh'] * 100) if result['energy_kwh'] > 0 else 0
                         
-                        # Metrics
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Total Latency", f"{result['total_latency_ms']:.0f} ms")
-                        with col2:
-                            st.metric("Energy Used", f"{result['energy_kwh']*1000:.3f} mWh")
-                        with col3:
-                            st.metric("Energy Saved", f"{result['energy_saved_pct']:.0f}%")
-                        with col4:
-                            st.metric("Green Score", f"{result['green_score']}/100")
-                        
-                        # Response
-                        st.markdown("**Model Response:**")
-                        st.text_area("", value=result['response'], height=200, disabled=True)
+                        if energy_diff > 0:
+                            efficiency_analysis = f"""
+                            **⚠️ Less Efficient**: {comp_result['model_name']} consumed **{energy_diff*1000:.3f} mWh** ({energy_diff_pct:.1f}% more energy) than the optimal model.
+                            
+                            **Why Less Efficient**: 
+                            - Model size: {comp_result['size_gb']:.1f} GB vs optimal {OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0):.1f} GB
+                            - Latency: {comp_result['latency_ms']:.0f} ms vs optimal {result['inference_latency_ms']:.0f} ms
+                            - The prompt complexity ({result['complexity'].upper()}) doesn't require this model's capacity
+                            """
+                            st.warning(efficiency_analysis)
+                        else:
+                            efficiency_analysis = f"""
+                            **✅ Comparable Efficiency**: {comp_result['model_name']} performed similarly to the optimal model.
+                            
+                            **Analysis**: 
+                            - Energy difference: {abs(energy_diff)*1000:.3f} mWh
+                            - This model could be a viable alternative for similar complexity tasks
+                            """
+                            st.info(efficiency_analysis)
+        
+        # === PERFORMANCE INSIGHTS ===
+        st.subheader("💡 Performance Insights")
+        
+        insights = []
+        
+        # Energy efficiency insight
+        if result['energy_saved_pct'] > 70:
+            insights.append("🌟 **Excellent energy efficiency** - You saved over 70% energy compared to using the large model!")
+        elif result['energy_saved_pct'] > 40:
+            insights.append("✅ **Good energy efficiency** - Significant energy savings achieved.")
+        elif result['energy_saved_pct'] > 0:
+            insights.append("👍 **Moderate energy savings** - Some efficiency gained by smart routing.")
+        else:
+            insights.append("⚠️ **No energy savings** - This prompt required the large model, which is appropriate for its complexity.")
+        
+        # Latency insight
+        if result['total_latency_ms'] < 1000:
+            insights.append("⚡ **Fast response** - Total processing time under 1 second.")
+        elif result['total_latency_ms'] < 3000:
+            insights.append("⏱️ **Reasonable response time** - Processing completed in under 3 seconds.")
+        else:
+            insights.append("🐌 **Slower response** - Complex task requiring more processing time.")
+        
+        # Model choice insight
+        if result['complexity'] == 'small':
+            insights.append("🎯 **Optimal routing** - Simple task efficiently handled by small model.")
+        elif result['complexity'] == 'medium':
+            insights.append("⚖️ **Balanced routing** - Medium complexity task matched with medium model.")
+        else:
+            insights.append("🧠 **Appropriate routing** - Complex task requires large model for quality results.")
+        
+        for insight in insights:
+            st.info(insight)
+        
+        # === HISTORICAL ANALYTICS ===
+        if len(st.session_state['processing_history']) > 1:
+            st.markdown("---")
+            st.subheader("📈 Historical Analytics")
+            
+            history_df = pd.DataFrame(st.session_state['processing_history'])
+            
+            # Summary statistics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_energy_saved = history_df['energy_saved_kwh'].sum() * 1000
+                st.metric("Total Energy Saved", f"{total_energy_saved:.3f} mWh")
+            
+            with col2:
+                avg_green_score = history_df['green_score'].mean()
+                st.metric("Avg Green Score", f"{avg_green_score:.1f}/100")
+            
+            with col3:
+                total_prompts = len(history_df)
+                st.metric("Total Prompts Processed", total_prompts)
+            
+            with col4:
+                small_prompts = (history_df['complexity'] == 'small').sum()
+                st.metric("Small Prompts", f"{small_prompts} ({small_prompts/total_prompts*100:.0f}%)")
+            
+            # Complexity distribution pie chart
+            complexity_counts = history_df['complexity'].value_counts()
+            fig_history_pie = px.pie(
+                values=complexity_counts.values,
+                names=complexity_counts.index,
+                color=complexity_counts.index,
+                color_discrete_map={
+                    'small': '#10b981',
+                    'medium': '#f59e0b',
+                    'large': '#ef4444'
+                },
+                title="Historical Complexity Distribution"
+            )
+            fig_history_pie.update_layout(height=400)
+            st.plotly_chart(fig_history_pie, use_container_width=True)
+            
+            # Energy savings over time
+            history_df['prompt_num'] = range(1, len(history_df) + 1)
+            fig_energy_trend = px.line(
+                history_df,
+                x='prompt_num',
+                y='energy_saved_pct',
+                title="Energy Savings Trend (%)",
+                labels={'energy_saved_pct': 'Energy Saved (%)', 'prompt_num': 'Prompt Number'}
+            )
+            fig_energy_trend.update_layout(height=400)
+            st.plotly_chart(fig_energy_trend, use_container_width=True)
+            
+            # Historical data table
+            st.subheader("📋 Processing History")
+            
+            history_display = history_df[[
+                'timestamp', 'prompt_preview', 'complexity', 'model_name', 
+                'energy_saved_pct', 'green_score', 'total_latency_ms'
+            ]].copy()
+            
+            history_display.columns = [
+                'Time', 'Prompt Preview', 'Complexity', 'Model Used',
+                'Energy Saved (%)', 'Green Score', 'Latency (ms)'
+            ]
+            
+            st.dataframe(history_display, use_container_width=True, hide_index=True)
 
 
 def render_router_stats():

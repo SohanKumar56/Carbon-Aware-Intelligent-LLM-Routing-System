@@ -1,17 +1,15 @@
 """
-energy_tracker.py — Energy & carbon footprint estimation for LLM routing.
+energy_tracker.py — Energy & carbon footprint tracking for LLM routing.
 
-Provides CO₂ accounting for Ollama model inference based on model size.
-Energy is estimated as: model_size_gb × 0.00005 kWh per inference.
+Provides CO₂ accounting for Ollama model inference using CodeCarbon
+for real hardware energy measurements.
 
-Optional CodeCarbon integration: if the ``codecarbon`` library is installed,
-real hardware measurements are used instead of estimates.
+CodeCarbon is REQUIRED for this system to function properly.
 
 Public API
 ----------
-estimate_routing_energy(model_size_gb, baseline_size_gb)
-    → dict with energy_kwh, co2_kg, green_score, energy_saved_pct, energy_saved_kwh
-
+measure_with_tracker(fn) → tuple(result, {energy_kwh, co2_kg, source})
+calculate_metrics(energy_kwh, baseline_energy_kwh) → dict with green_score, savings
 format_energy(kwh)  → human-readable string
 format_co2(kg)      → human-readable string
 """
@@ -21,58 +19,42 @@ import logging
 from typing import Callable, Any
 
 from config import CO2_INTENSITY
+from codecarbon import EmissionsTracker as _CCTracker
 
 logger = logging.getLogger(__name__)
 
-# ── Energy constant ────────────────────────────────────────────────────────────
-# Estimated kWh per GB of model size for local Ollama inference
-ENERGY_PER_GB = 0.00005  # kWh / GB
 
-# ── Optional CodeCarbon import ─────────────────────────────────────────────────
-try:
-    from codecarbon import EmissionsTracker as _CCTracker
-    _CODECARBON_AVAILABLE = True
-    logger.info("CodeCarbon found — hardware tracking enabled.")
-except ImportError:
-    _CODECARBON_AVAILABLE = False
-    logger.info("CodeCarbon not installed — using empirical energy estimates.")
-
-
-def estimate_routing_energy(
-    model_size_gb: float,
-    baseline_size_gb: float,
+def calculate_metrics(
+    energy_kwh: float,
+    baseline_energy_kwh: float,
 ) -> dict:
     """
-    Return energy/carbon metrics for a routed Ollama inference.
+    Calculate energy/carbon metrics from measured energy values.
 
     Parameters
     ----------
-    model_size_gb : float
-        Size of the model actually used (GB).
-    baseline_size_gb : float
-        Size of the always-large baseline model (GB) for savings comparison.
+    energy_kwh : float
+        Actual energy consumed (measured by CodeCarbon).
+    baseline_energy_kwh : float
+        Baseline energy consumption (measured by CodeCarbon for large model).
 
     Returns
     -------
     dict
-        energy_kwh        – kilowatt-hours consumed
         co2_kg            – kilograms of CO₂ equivalent
         green_score       – 0-100 environmental efficiency score
         energy_saved_pct  – % energy saved vs always using the baseline
         energy_saved_kwh  – absolute kWh saved vs baseline
     """
-    energy_kwh    = model_size_gb * ENERGY_PER_GB
-    baseline_kwh  = baseline_size_gb * ENERGY_PER_GB
-    co2_kg        = energy_kwh * CO2_INTENSITY
+    co2_kg = energy_kwh * CO2_INTENSITY
 
-    saved_kwh     = max(0.0, baseline_kwh - energy_kwh)
-    saved_pct     = round(saved_kwh / baseline_kwh * 100, 1) if baseline_kwh > 0 else 0.0
-    green_score   = max(0, min(100, round(100 * (1 - energy_kwh / baseline_kwh)))) if baseline_kwh > 0 else 0
+    saved_kwh = max(0.0, baseline_energy_kwh - energy_kwh)
+    saved_pct = round(saved_kwh / baseline_energy_kwh * 100, 1) if baseline_energy_kwh > 0 else 0.0
+    green_score = max(0, min(100, round(100 * (1 - energy_kwh / baseline_energy_kwh)))) if baseline_energy_kwh > 0 else 0
 
     return {
-        "energy_kwh":       energy_kwh,
-        "co2_kg":           co2_kg,
-        "green_score":      green_score,
+        "co2_kg": co2_kg,
+        "green_score": green_score,
         "energy_saved_pct": saved_pct,
         "energy_saved_kwh": saved_kwh,
     }
@@ -80,9 +62,7 @@ def estimate_routing_energy(
 
 def measure_with_tracker(fn: Callable[[], Any]) -> tuple[Any, dict]:
     """
-    Execute *fn()* inside a CodeCarbon tracker (if available).
-
-    Falls back gracefully when CodeCarbon is not installed.
+    Execute *fn()* inside a CodeCarbon tracker for real hardware energy measurement.
 
     Parameters
     ----------
@@ -94,25 +74,22 @@ def measure_with_tracker(fn: Callable[[], Any]) -> tuple[Any, dict]:
     tuple
         (result_of_fn, {energy_kwh, co2_kg, source})
     """
-    if _CODECARBON_AVAILABLE:
-        tracker = _CCTracker(
-            project_name="carbon_aware_llm_routing",
-            measure_power_secs=1,
-            log_level="error",
-            save_to_file=False,
-        )
-        tracker.start()
-        result = fn()
-        emissions = tracker.stop()   # returns kg CO₂
-        energy_kwh = emissions / CO2_INTENSITY if emissions else 0.0
-        return result, {
-            "energy_kwh": energy_kwh,
-            "co2_kg":     emissions or 0.0,
-            "source":     "CodeCarbon",
-        }
-    else:
-        result = fn()
-        return result, {"source": "empirical"}
+    tracker = _CCTracker(
+        project_name="carbon_aware_llm_routing",
+        measure_power_secs=1,
+        log_level="error",
+        save_to_file=False,
+    )
+    tracker.start()
+    result = fn()
+    emissions = tracker.stop()   # returns kg CO₂
+    energy_kwh = emissions / CO2_INTENSITY if emissions else 0.0
+    
+    return result, {
+        "energy_kwh": energy_kwh,
+        "co2_kg":     emissions or 0.0,
+        "source":     "CodeCarbon",
+    }
 
 
 def format_energy(kwh: float) -> str:

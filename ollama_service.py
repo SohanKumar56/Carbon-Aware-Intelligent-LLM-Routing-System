@@ -9,6 +9,7 @@ import time
 import requests
 import os
 import logging
+from codecarbon import EmissionsTracker
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_API_TAGS = f"{OLLAMA_BASE_URL}/api/tags"
@@ -85,7 +86,7 @@ def get_installed_models() -> list[str]:
         return []
 
 def run_ollama_inference(model: str, prompt: str) -> dict:
-    """Run a non-streaming inference on a specific model."""
+    """Run a non-streaming inference on a specific model with energy measurement."""
     payload = {
         "model": model,
         "prompt": prompt,
@@ -93,9 +94,25 @@ def run_ollama_inference(model: str, prompt: str) -> dict:
     }
     
     start_time = time.time()
+    
+    # Use CodeCarbon to measure energy consumption
+    tracker = EmissionsTracker(
+        project_name="ollama_dashboard",
+        measure_power_secs=1,
+        log_level="error",
+        save_to_file=False,
+    )
+    
     try:
+        tracker.start()
         response = requests.post(OLLAMA_API_GENERATE, json=payload, timeout=60)
+        emissions = tracker.stop()
         latency = time.time() - start_time
+        
+        # Calculate energy from emissions (using IEA 2023 average)
+        co2_intensity = 0.475  # kg CO₂/kWh
+        energy_kwh = emissions / co2_intensity if emissions else 0.0
+        co2_kg = emissions if emissions else 0.0
         
         if response.status_code == 200:
             result = response.json()
@@ -103,23 +120,36 @@ def run_ollama_inference(model: str, prompt: str) -> dict:
                 "status": "success",
                 "response": result.get("response", ""),
                 "latency": round(latency, 2),
-                "model": model
+                "model": model,
+                "energy_kwh": energy_kwh,
+                "co2_kg": co2_kg
             }
         else:
             return {
                 "status": "error",
                 "message": f"API Error: {response.status_code}",
-                "model": model
+                "model": model,
+                "energy_kwh": 0.0,
+                "co2_kg": 0.0
             }
     except requests.Timeout:
+        tracker.stop()
         return {
             "status": "error",
             "message": "Request timed out",
-            "model": model
+            "model": model,
+            "energy_kwh": 0.0,
+            "co2_kg": 0.0
         }
     except Exception as e:
+        try:
+            tracker.stop()
+        except:
+            pass
         return {
             "status": "error",
             "message": str(e),
-            "model": model
+            "model": model,
+            "energy_kwh": 0.0,
+            "co2_kg": 0.0
         }

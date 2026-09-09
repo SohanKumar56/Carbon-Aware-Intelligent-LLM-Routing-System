@@ -12,6 +12,208 @@ from ollama_service import (
     get_installed_models, 
     run_ollama_inference
 )
+from ollama_integration import OLLAMA_MODELS, run_ollama_inference as ollama_run_inference
+
+def generate_llm_explanation(prompt_text, model_id="tinyllama:latest"):
+    """
+    Generate explanation using LLM for more natural language.
+    
+    Parameters
+    ----------
+    prompt_text : str
+        The prompt to send to the LLM
+    model_id : str
+        The model to use for explanation generation (default: tinyllama)
+    
+    Returns
+    -------
+    str
+        The LLM-generated explanation
+    """
+    try:
+        result = ollama_run_inference(model_id, prompt_text, timeout=60)
+        if result.get("error"):
+            # Fallback to simple explanation if LLM fails
+            return None
+        return result.get("raw_response", "").strip()
+    except Exception as e:
+        # Fallback if LLM call fails
+        return None
+
+def generate_efficiency_explanation(model_id, energy_kwh, latency_ms, response_length):
+    """
+    Generate an explanation of why this model performed efficiently or not using LLM.
+    
+    Parameters
+    ----------
+    model_id : str
+        The model identifier
+    energy_kwh : float
+        Energy consumed in kWh
+    latency_ms : float
+        Inference latency in milliseconds
+    response_length : int
+        Length of the response in characters
+    
+    Returns
+    -------
+    str
+        Efficiency explanation text
+    """
+    model_info = OLLAMA_MODELS.get(model_id, {})
+    model_size = model_info.get('size', 0)
+    model_name = model_info.get('name', model_id)
+    
+    # Calculate efficiency metrics
+    energy_per_char = (energy_kwh * 1000) / response_length if response_length > 0 else 0
+    energy_mwh = energy_kwh * 1000
+    
+    # Try LLM-generated explanation first
+    llm_prompt = f"""
+Generate a concise efficiency analysis for this model performance:
+
+Model: {model_name} ({model_size:.1f}GB)
+Energy consumed: {energy_mwh:.3f} mWh
+Latency: {latency_ms:.0f}ms
+Response length: {response_length} characters
+Energy per character: {energy_per_char:.6f} mWh/char
+
+Provide a 2-3 sentence explanation of why this model is efficient or not. Focus on:
+1. Model size appropriateness
+2. Energy efficiency 
+3. Performance characteristics
+
+Keep it brief and technical. Start with "Efficiency Analysis:" and then your explanation.
+"""
+    
+    llm_explanation = generate_llm_explanation(llm_prompt)
+    
+    if llm_explanation:
+        return f"**Efficiency Analysis for {model_name}**\n\n{llm_explanation}"
+    
+    # Fallback to hardcoded explanation if LLM fails
+    explanation = f"**Efficiency Analysis for {model_name}**\n\n"
+    
+    # Size-based efficiency analysis
+    if model_size < 1.0:
+        explanation += f"🟢 **Compact Model Advantage**: {model_name} ({model_size:.1f}GB) is highly energy-efficient for this task.\n"
+        explanation += f"- Energy per character: {energy_per_char:.6f} mWh/char\n"
+        explanation += f"- Excellent for simple to moderate complexity prompts\n"
+    elif model_size < 3.0:
+        explanation += f"🟡 **Balanced Model**: {model_name} ({model_size:.1f}GB) offers good performance/efficiency balance.\n"
+        explanation += f"- Energy per character: {energy_per_char:.6f} mWh/char\n"
+        explanation += f"- Suitable for medium complexity tasks requiring some reasoning\n"
+    else:
+        explanation += f"🔴 **Large Model**: {model_name} ({model_size:.1f}GB) has higher energy requirements.\n"
+        explanation += f"- Energy per character: {energy_per_char:.6f} mWh/char\n"
+        explanation += f"- Appropriate for complex tasks requiring advanced reasoning\n"
+    
+    # Latency analysis
+    if latency_ms < 500:
+        explanation += f"⚡ **Fast Response**: {latency_ms:.0f}ms indicates efficient processing.\n"
+    elif latency_ms < 2000:
+        explanation += f"⏱️ **Moderate Response**: {latency_ms:.0f}ms is acceptable for this model size.\n"
+    else:
+        explanation += f"🐌 **Slower Response**: {latency_ms:.0f}ms suggests complex processing or resource constraints.\n"
+    
+    # Overall efficiency assessment
+    if energy_per_char < 0.001:
+        explanation += f"✅ **Highly Efficient**: Excellent energy-to-output ratio.\n"
+    elif energy_per_char < 0.005:
+        explanation += f"✅ **Efficient**: Good energy-to-output ratio.\n"
+    else:
+        explanation += f"⚠️ **Less Efficient**: Higher energy consumption per output character.\n"
+    
+    return explanation
+
+def generate_comparison_explanation(current_model_id, compared_model_id, current_energy, compared_energy, current_latency, compared_latency):
+    """
+    Generate an explanation of why the compared model is less efficient than the current model using LLM.
+    
+    Parameters
+    ----------
+    current_model_id : str
+        The current (better) model identifier
+    compared_model_id : str
+        The compared (less efficient) model identifier
+    current_energy : float
+        Current model energy in kWh
+    compared_energy : float
+        Compared model energy in kWh
+    current_latency : float
+        Current model latency in ms
+    compared_latency : float
+        Compared model latency in ms
+    
+    Returns
+    -------
+    str
+        Comparison explanation text
+    """
+    current_info = OLLAMA_MODELS.get(current_model_id, {})
+    compared_info = OLLAMA_MODELS.get(compared_model_id, {})
+    
+    current_name = current_info.get('name', current_model_id)
+    compared_name = compared_info.get('name', compared_model_id)
+    current_size = current_info.get('size', 0)
+    compared_size = compared_info.get('size', 0)
+    
+    # Calculate differences
+    energy_diff = compared_energy - current_energy
+    energy_diff_pct = (energy_diff / current_energy * 100) if current_energy > 0 else 0
+    latency_diff = compared_latency - current_latency
+    latency_diff_pct = (latency_diff / current_latency * 100) if current_latency > 0 else 0
+    
+    # Try LLM-generated explanation first
+    llm_prompt = f"""
+Generate a concise comparison explanation for these two models:
+
+More efficient model: {current_name} ({current_size:.1f}GB, {current_energy*1000:.3f} mWh, {current_latency:.0f}ms)
+Less efficient model: {compared_name} ({compared_size:.1f}GB, {compared_energy*1000:.3f} mWh, {compared_latency:.0f}ms)
+
+Energy difference: {energy_diff*1000:.3f} mWh ({energy_diff_pct:.1f}% increase)
+Latency difference: {latency_diff:.0f}ms ({latency_diff_pct:.1f}% increase)
+
+Explain in 2-3 sentences why {compared_name} is less efficient than {current_name}. Focus on:
+1. Size differences and their impact
+2. Energy consumption comparison
+3. Performance trade-offs
+
+Keep it brief and technical. Start with "Comparison:" and then your explanation.
+"""
+    
+    llm_explanation = generate_llm_explanation(llm_prompt)
+    
+    if llm_explanation:
+        return f"**Why {compared_name} is Less Efficient**\n\n{llm_explanation}"
+    
+    # Fallback to hardcoded explanation if LLM fails
+    explanation = f"**Why {compared_name} is Less Efficient**\n\n"
+    
+    # Size comparison
+    if compared_size > current_size:
+        size_diff = compared_size - current_size
+        explanation += f"📏 **Size Disadvantage**: {compared_name} is {size_diff:.1f}GB larger than {current_name}.\n"
+        explanation += f"- Larger models consume more energy for the same task\n"
+        explanation += f"- This size difference is not justified for this prompt's complexity\n"
+    
+    # Energy comparison
+    if energy_diff > 0:
+        explanation += f"⚡ **Energy Inefficiency**: {compared_name} consumed {energy_diff*1000:.3f} mWh more energy ({energy_diff_pct:.1f}% increase).\n"
+        explanation += f"- Current model: {current_energy*1000:.3f} mWh\n"
+        explanation += f"- Compared model: {compared_energy*1000:.3f} mWh\n"
+    
+    # Latency comparison
+    if latency_diff > 0:
+        explanation += f"⏱️ **Speed Disadvantage**: {compared_name} was {latency_diff:.0f}ms slower ({latency_diff_pct:.1f}% increase).\n"
+        explanation += f"- Current model: {current_latency:.0f}ms\n"
+        explanation += f"- Compared model: {compared_latency:.0f}ms\n"
+    
+    # Overall assessment
+    explanation += f"\n**Conclusion**: {current_name} is more efficient because it provides similar or better results with significantly lower energy consumption and faster response times.\n"
+    explanation += f"The prompt complexity doesn't justify the additional computational overhead of {compared_name}.\n"
+    
+    return explanation
 
 def render_ollama_status():
     """Render the Ollama status badge and auto-start logic."""
@@ -152,8 +354,28 @@ def render_dashboard():
                     st.info("Thinking...")
                 elif resp:
                     if resp["status"] == "success":
+                        # Show the model response
                         st.markdown(f'<div class="panel-output">{resp["response"]}</div>', unsafe_allow_html=True)
-                        st.markdown(f'<div class="latency-badge">⏱ {resp["latency"]}s · {resp["model"]}</div>', unsafe_allow_html=True)
+                        
+                        # Generate and show efficiency explanation using real energy data
+                        model_id = resp["model"]
+                        energy_kwh = resp.get("energy_kwh", 0.0)
+                        latency_ms = resp["latency"] * 1000  # convert to ms
+                        response_length = len(resp["response"])
+                        
+                        efficiency_explanation = generate_efficiency_explanation(
+                            model_id, energy_kwh, latency_ms, response_length
+                        )
+                        
+                        # Show energy metrics in the badge
+                        energy_mwh = energy_kwh * 1000
+                        co2_mg = resp.get("co2_kg", 0.0) * 1000
+                        st.markdown(f'<div class="latency-badge">⏱ {resp["latency"]}s · {resp["model"]} · ⚡ {energy_mwh:.3f} mWh · 🌱 {co2_mg:.3f} mg CO₂</div>', unsafe_allow_html=True)
+                        
+                        # Show efficiency explanation in an expandable section
+                        with st.expander("📊 Efficiency Analysis", expanded=False):
+                            st.markdown(efficiency_explanation)
+                        
                         if st.button(f"📋 Copy", key=f"copy_{i}"):
                             # Streamlit doesn't have a simple copy-to-clipboard, but we can show it
                             st.toast("Response copied to memory (conceptual)!")
@@ -197,3 +419,34 @@ def render_dashboard():
         
         st.session_state.ollama_loading = False
         st.rerun()
+
+    # ── Model Comparison Section ──────────────────────────────────────────────
+    if all(st.session_state.ollama_responses):  # Only show if all panels have results
+        st.markdown("---")
+        st.markdown('<p class="section-title">📊 Model Efficiency Comparison</p>', unsafe_allow_html=True)
+        
+        # Compare each model against the most efficient one
+        responses = st.session_state.ollama_responses
+        successful_responses = [resp for resp in responses if resp.get("status") == "success"]
+        
+        if len(successful_responses) >= 2:  # Need at least 2 successful responses for comparison
+            # Find the most efficient model (lowest energy)
+            efficient_model = min(successful_responses, key=lambda x: x.get("energy_kwh", float('inf')))
+            
+            # Compare other models against the efficient one
+            for resp in successful_responses:
+                if resp != efficient_model:
+                    model_id = resp["model"]
+                    efficient_id = efficient_model["model"]
+                    
+                    comparison = generate_comparison_explanation(
+                        efficient_id,
+                        model_id,
+                        efficient_model.get("energy_kwh", 0),
+                        resp.get("energy_kwh", 0),
+                        efficient_model.get("latency", 0) * 1000,
+                        resp.get("latency", 0) * 1000
+                    )
+                    
+                    with st.expander(f"⚠️ Why {resp['model']} is less efficient than {efficient_model['model']}", expanded=False):
+                        st.markdown(comparison)

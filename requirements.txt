@@ -5,7 +5,7 @@ torch>=2.9.0
 torchvision>=0.21.0
 tokenizers>=0.21.0
 
-# ── Carbon tracking (optional — system degrades gracefully without it) ─────────
+# ── Carbon tracking (REQUIRED for energy/carbon measurements) ────────────────
 codecarbon>=2.4.1
 
 # ── Dashboard & visualisation ─────────────────────────────────────────────────
@@ -13,6 +13,11 @@ streamlit>=1.33.0
 plotly>=5.21.0
 pandas>=2.2.0
 
+# ── Big Data Processing (PySpark for distributed preprocessing) ────────────────
+pyspark>=3.5.0
+pyarrow>=14.0.1
+
 # ── Utilities ─────────────────────────────────────────────────────────────────
 numpy>=1.26.0
 requests>=2.31.0
+datasets>=2.14.0
