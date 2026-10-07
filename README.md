@@ -18,6 +18,9 @@ A Green AI system that classifies the **complexity of a user's prompt** before r
 - [Installation & Setup](#installation--setup)
 - [Running the App](#running-the-app)
 - [Tech Stack](#tech-stack)
+- [Data Processing Pipeline](#data-processing-pipeline)
+- [Testing & Validation](#testing--validation)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -207,45 +210,69 @@ The `codecarbon` library is **required** for energy and carbon measurements. It 
 ```
 Carbon-Aware-Intelligent-LLM-Routing-System/
 │
-├── app.py                          # Streamlit entry point
-├── config.py                       # CO₂ intensity, page settings
-├── energy_tracker.py               # kWh / CO₂ / green score calculations
+├── app.py                          # Streamlit entry point with dual dashboards
+├── config.py                       # Central configuration (CO₂ intensity, page settings)
+├── energy_tracker.py               # Energy & carbon footprint calculations
 │
-├── complexity_classifier.py        # MiniLM inference + heuristic rules
-├── routing_pipeline.py             # classify → route → infer → metrics
+├── complexity_classifier.py        # MiniLM inference + 7 heuristic override rules
+├── routing_pipeline.py             # classify → route → infer → metrics pipeline
 │
 ├── ollama_integration.py           # Ollama API calls + CodeCarbon energy measurements
-├── ollama_service.py               # Ollama process management
+├── ollama_service.py               # Ollama process management (auto-start, health check)
 │
-├── prompt_router_dashboard.py      # Streamlit UI: Prompt Router tab
+├── prompt_router_dashboard.py      # Streamlit UI: Prompt Router tab with LLM explanations
 ├── ollama_dashboard.py             # Streamlit UI: Multi-Model Compare tab
 │
 ├── model/
 │   ├── train_classifier.py         # Local training script
-│   └── prompt_complexity_classifier/
-│       ├── model.safetensors       # Trained weights (used at runtime)
-│       ├── config.json
+│   └── prompt_complexity_classifier/  # Trained MiniLM model (93.2% accuracy)
+│       ├── model.safetensors       # Fine-tuned weights (133MB)
+│       ├── config.json             # Label mappings (0=small, 1=medium, 2=large)
 │       ├── tokenizer.json
 │       ├── tokenizer_config.json
 │       ├── training_args.bin
-│       └── training_report.txt
+│       └── training_report.txt     # Accuracy, F1, confusion matrix
 │
 ├── data/
-│   ├── fetch_datasets.py           # Downloads raw datasets
-│   ├── build_labeled_dataset.py    # Applies heuristic labels
-│   ├── cache/                      # Raw parquet files
-│   └── labeled/
-│       ├── prompt_complexity_labeled.parquet   # Training data
-│       └── llm_judge_eval_set.csv              # Quality spot-check
+│   ├── fetch_datasets.py           # Downloads raw datasets (WildChat, GSM8K, SupraLabs)
+│   ├── fetch_datasets_spark.py    # PySpark version for distributed downloading
+│   ├── build_labeled_dataset.py    # Applies heuristic labels using Pandas
+│   ├── build_labeled_dataset_spark.py  # PySpark version (5x faster)
+│   ├── compare_pandas_vs_spark.py  # Benchmarking script
+│   ├── spark_config.py             # PySpark configuration
+│   ├── judge_rubric.md             # Classification criteria for labeling
+│   ├── inspect_labeled_data.py     # Data inspection utilities
+│   ├── inspect_supralabs.py        # SupraLabs dataset inspection
+│   ├── cache/                      # Raw downloaded datasets (parquet format)
+│   └── labeled/                     # Final labeled training data
+│       ├── prompt_complexity_labeled.parquet   # 28,465 labeled prompts
+│       └── dataset_metadata.json
 │
 ├── eval/
-│   └── routing_validation.py       # Validates routing decisions vs Ollama
+│   └── routing_validation.py       # Validates routing decisions vs real Ollama models
 │
-├── colab_train_classifier.py       # Google Colab training notebook script
+├── colab_train_classifier.py       # Google Colab training script
+├── Colab_Training_Notebook.ipynb   # Interactive GPU training notebook
+│
 ├── test_ollama.py                  # Quick Ollama connectivity test
 ├── test_improvements.py            # Classifier smoke tests
+├── test_pyspark_installation.py    # PySpark installation verification
 │
-└── requirements.txt
+├── requirements.txt                # Python dependencies
+│
+└── DOCUMENTATION/
+    ├── QUICK_START_GUIDE.md        # Quick start instructions
+    ├── OLLAMA_INTEGRATION.md       # Ollama integration guide
+    ├── PROMPT_ROUTER_FEATURE.md    # Complete prompt router documentation
+    ├── IMPLEMENTATION_COMPLETE.md  # Implementation summary
+    ├── COLAB_TRAINING_INSTRUCTIONS.md  # GPU training guide
+    ├── SPARK_PREPROCESSING_GUIDE.md   # PySpark preprocessing guide
+    ├── CONFIDENCE_SCORING_UPDATE.md   # Confidence scoring details
+    ├── CURRICULUM_IMPLEMENTATION_MAP.md  # Feature implementation roadmap
+    ├── PYSPARK_IMPLEMENTATION_SUMMARY.md # PySpark integration summary
+    ├── IMPROVEMENTS_APPLIED.md     # Applied improvements log
+    ├── READY_TO_USE.md            # Ready-to-use status
+    └── TEST_THE_IMPROVEMENTS.md   # Testing guide
 ```
 
 ---
@@ -361,3 +388,217 @@ Open `Colab_Training_Notebook.ipynb` in Google Colab, run all cells, then downlo
 python model/train_classifier.py
 ```
 Requires the labeled dataset at `data/labeled/prompt_complexity_labeled.parquet`. Takes ~7 minutes on a T4 GPU or significantly longer on CPU.
+
+---
+
+## Data Processing Pipeline
+
+### Dataset Sources
+
+The system uses three main datasets for training the complexity classifier:
+
+1. **WildChat** (20,000 prompts) - Diverse real-world user queries from allenai/WildChat
+2. **GSM8K** (7,473 prompts) - Grade-school math problems requiring multi-step reasoning
+3. **SupraLabs** (992 prompts) - Pre-labeled routing examples from SupraLabs/Prompt-Routing-Dataset
+
+### Data Processing Options
+
+#### Option 1: Pandas (Standard)
+```powershell
+cd data
+python fetch_datasets.py          # Download raw datasets
+python build_labeled_dataset.py   # Apply heuristic labels
+```
+
+#### Option 2: PySpark (Recommended for Large Datasets)
+```powershell
+cd data
+python fetch_datasets_spark.py         # Download with PySpark (faster)
+python build_labeled_dataset_spark.py  # Process with PySpark (5x faster)
+```
+
+**PySpark Benefits:**
+- 5x faster processing for large datasets
+- Distributed computing capabilities
+- Better memory management
+- Scalable to millions of prompts
+
+### Class Distribution
+
+| Class | Count | Percentage |
+|-------|-------|------------|
+| Large | 14,061 | 49.4% |
+| Medium | 8,232 | 28.9% |
+| Small | 6,172 | 21.7% |
+
+### Heuristic Labeling
+
+The system uses heuristic rules to label prompts based on:
+- Token count (short prompts → small, long prompts → large)
+- Multi-step reasoning indicators (step by step, analyze, evaluate)
+- Math/code content keywords
+- Question complexity patterns
+
+See `data/judge_rubric.md` for detailed classification criteria.
+
+---
+
+## Testing & Validation
+
+### Quick Classifier Test
+
+Test the classifier without Ollama:
+
+```powershell
+python complexity_classifier.py
+```
+
+This runs 6 built-in test prompts and displays classification results.
+
+### Ollama Connectivity Test
+
+Verify Ollama is running and accessible:
+
+```powershell
+python test_ollama.py
+```
+
+### Routing Validation
+
+Validate routing decisions with real Ollama models:
+
+```powershell
+cd eval
+python routing_validation.py
+```
+
+This script:
+- Samples prompts from each complexity class
+- Runs them through both small and large models
+- Compares response quality
+- Measures actual energy savings
+
+### PySpark Installation Test
+
+Verify PySpark is installed correctly:
+
+```powershell
+python test_pyspark_installation.py
+```
+
+### Benchmarking
+
+Compare Pandas vs PySpark performance:
+
+```powershell
+cd data
+python compare_pandas_vs_spark.py
+```
+
+---
+
+## Troubleshooting
+
+### Classifier Issues
+
+**"Model not found" error**
+- Ensure `model/prompt_complexity_classifier/` directory exists
+- Check that `model.safetensors` file is present (133MB)
+- Verify `config.json` contains correct label mappings
+
+**Slow classification on first run**
+- First load takes 1-2 seconds (model loading)
+- Subsequent calls are ~10ms due to module-level caching
+- This is normal behavior
+
+**Low confidence scores**
+- Confidence < 70% may indicate ambiguous prompts
+- The system includes 7 heuristic override rules to handle edge cases
+- Check the reasoning section for rule override notifications
+
+### Ollama Issues
+
+**"Ollama not running" error**
+- Start Ollama: `ollama serve`
+- Check if running: `curl http://localhost:11434/api/tags`
+- Verify installation from https://ollama.com/download
+
+**"Cannot connect to Ollama"**
+- Ensure Ollama server is running on port 11434
+- Check firewall settings
+- Try restarting Ollama server
+
+**"Request timeout"**
+- Increase timeout in `ollama_integration.py` (model-specific timeouts)
+- Use smaller models for faster inference
+- Check system resources (RAM, CPU)
+
+**Models not appearing in dropdown**
+- Pull models first: `ollama pull <model-name>`
+- List installed models: `ollama list`
+- Check `OLLAMA_MODELS` dictionary in `ollama_integration.py`
+
+### Energy Tracking Issues
+
+**"CodeCarbon not installed"**
+- Install with: `pip install codecarbon>=2.4.1`
+- Required for accurate energy measurements
+- The system uses real hardware energy tracking, not estimates
+
+**Energy measurements showing 0**
+- Ensure CodeCarbon is properly installed
+- Check that hardware sensors are accessible
+- May need administrator privileges on some systems
+
+### PySpark Issues
+
+**"PySpark not found"**
+- Install with: `pip install pyspark>=3.5.0 pyarrow>=14.0.1`
+- Already included in requirements.txt
+- Optional: PySpark is not required for basic functionality
+
+**Java not found error**
+- PySpark requires Java (JRE 8 or higher)
+- Install Java from https://www.java.com/download/
+- Set JAVA_HOME environment variable
+
+**Memory errors during processing**
+- Increase Spark memory in `data/spark_config.py`
+- Use Pandas version for smaller datasets
+- Close other applications to free memory
+
+### Dashboard Issues
+
+**Streamlit not starting**
+- Ensure all dependencies are installed: `pip install -r requirements.txt`
+- Check Python version (3.8+ required)
+- Try: `streamlit run app.py --server.port 8501`
+
+**Dashboard not accessible**
+- Check if firewall blocks port 8501
+- Try accessing http://localhost:8501
+- Check Streamlit logs for errors
+
+**Sidebar navigation not working**
+- Clear browser cache
+- Refresh the page
+- Check browser console for JavaScript errors
+
+### General Issues
+
+**Import errors**
+- Ensure virtual environment is activated
+- Reinstall dependencies: `pip install -r requirements.txt`
+- Check Python path configuration
+
+**Performance issues**
+- Close other applications
+- Use smaller Ollama models
+- Disable PySpark if not needed
+- Check system resources
+
+**For more help:**
+- Check documentation files in the project root
+- Review inline code documentation
+- Check logs in the Streamlit dashboard
+- See specific documentation files for detailed guides

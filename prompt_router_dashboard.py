@@ -13,9 +13,152 @@ import plotly.graph_objects as go
 import plotly.express as px
 from complexity_classifier import route_to_model, classify_prompt_complexity_detailed
 from routing_pipeline import run_routing_pipeline, BASELINE_MODEL
-from ollama_integration import OLLAMA_MODELS, check_ollama_availability
+from ollama_integration import OLLAMA_MODELS, check_ollama_availability, run_ollama_inference
 import pandas as pd
 from datetime import datetime
+
+
+def generate_llm_model_explanation(model_name, model_size, complexity, energy_mwh, energy_saved_pct, co2_mg, green_score, latency_ms, prompt, model_id):
+    """
+    Generate explanation of why this model was chosen using the same model that processed the prompt.
+    
+    Parameters
+    ----------
+    model_name : str
+        Name of the selected model
+    model_size : float
+        Size of the model in GB
+    complexity : str
+        Classified complexity level
+    energy_mwh : float
+        Energy consumed in mWh
+    energy_saved_pct : float
+        Percentage of energy saved
+    co2_mg : float
+        CO2 emissions in mg
+    green_score : int
+        Green score out of 100
+    latency_ms : float
+        Total latency in ms
+    prompt : str
+        The original prompt
+    model_id : str
+        The model ID to use for generating the explanation (same as the one that processed the prompt)
+    
+    Returns
+    -------
+    str
+        LLM-generated explanation or None if generation fails
+    """
+    try:
+        llm_prompt = f"""
+You are {model_name} ({model_size:.1f}GB). Explain why you were chosen for this prompt.
+
+FACTS (do not change these):
+- Prompt complexity: {complexity.upper()}
+- Your energy consumption: {energy_mwh:.3f} mWh
+- Energy saved vs large model: {energy_saved_pct:.1f}%
+- Your latency: {latency_ms:.0f}ms
+- Green score: {green_score}/100
+
+STRICT RULES:
+1. You MUST use the exact model name "{model_name}" - do not invent names
+2. You MUST use the exact size {model_size:.1f}GB - do not change sizes
+3. If your size is SMALL (<3GB), this is an ADVANTAGE for efficiency
+4. If complexity is {complexity.upper()}, explain why your size matches this complexity level
+5. Never claim larger models are more efficient than smaller models
+6. Do not hallucinate numbers - use only the facts provided above
+
+Explain in 2-3 sentences why you were optimal for this {complexity} complexity task. Focus on:
+- Your size appropriateness for {complexity} complexity
+- Your energy efficiency achievements
+- Your performance characteristics
+
+Start with "Model Selection:" and keep it technical and accurate.
+"""
+        result = run_ollama_inference(model_id, llm_prompt, timeout=60)
+        if result.get("error"):
+            return None
+        return result.get("raw_response", "").strip()
+    except Exception as e:
+        return None
+
+
+def generate_llm_comparison_explanation(optimal_model_name, optimal_size, optimal_energy, optimal_latency, compared_model_name, compared_size, compared_energy, compared_latency, complexity, energy_diff, energy_diff_pct, latency_diff, latency_diff_pct, compared_model_id):
+    """
+    Generate LLM-based explanation for why a compared model is less efficient using the compared model itself.
+    
+    Parameters
+    ----------
+    optimal_model_name : str
+        Name of the optimal model
+    optimal_size : float
+        Size of optimal model in GB
+    optimal_energy : float
+        Energy consumed by optimal model in mWh
+    optimal_latency : float
+        Latency of optimal model in ms
+    compared_model_name : str
+        Name of the compared model
+    compared_size : float
+        Size of compared model in GB
+    compared_energy : float
+        Energy consumed by compared model in mWh
+    compared_latency : float
+        Latency of compared model in ms
+    complexity : str
+        Complexity level of the prompt
+    energy_diff : float
+        Energy difference in mWh
+    energy_diff_pct : float
+        Energy difference percentage
+    latency_diff : float
+        Latency difference in ms
+    latency_diff_pct : float
+        Latency difference percentage
+    compared_model_id : str
+        The model ID to use for generating the explanation (the compared model itself)
+    
+    Returns
+    -------
+    str
+        LLM-generated explanation or None if generation fails
+    """
+    try:
+        llm_prompt = f"""
+You are {compared_model_name} ({compared_size:.1f}GB). Explain why you are less efficient than {optimal_model_name} ({optimal_size:.1f}GB).
+
+FACTS (do not change these):
+- Your energy: {compared_energy:.3f} mWh
+- Optimal model energy: {optimal_energy:.3f} mWh
+- Energy difference: {energy_diff:.3f} mWh ({energy_diff_pct:.1f}%)
+- Your latency: {compared_latency:.0f}ms
+- Optimal model latency: {optimal_latency:.0f}ms
+- Latency difference: {latency_diff:.0f}ms ({latency_diff_pct:.1f}%)
+- Prompt complexity: {complexity.upper()}
+
+STRICT RULES:
+1. You MUST use exact model names "{compared_model_name}" and "{optimal_model_name}" - do not invent names
+2. You MUST use exact sizes {compared_size:.1f}GB and {optimal_size:.1f}GB - do not change sizes
+3. If your size is LARGER, this generally increases energy consumption (not decreases)
+4. Smaller models are typically MORE energy-efficient for appropriate complexity levels
+5. Explain why your size is or isn't justified for this {complexity} complexity task
+6. Do not hallucinate numbers - use only the facts provided above
+7. If {energy_diff > 0}, acknowledge you consumed MORE energy, not less
+
+Explain in 2-3 sentences why you are less efficient than {optimal_model_name} for this {complexity} complexity prompt. Focus on:
+- Your size vs optimal model size and energy impact
+- Your performance trade-offs
+- Whether your additional capacity is justified for this task
+
+Start with "Comparison:" and keep it technical and accurate.
+"""
+        result = run_ollama_inference(compared_model_id, llm_prompt, timeout=60)
+        if result.get("error"):
+            return None
+        return result.get("raw_response", "").strip()
+    except Exception as e:
+        return None
 
 
 def render_prompt_router_tab():
@@ -110,6 +253,17 @@ def render_prompt_router_tab():
         
         st.markdown("---")
         
+        # === OUTPUT SECTION ===
+        st.subheader("🤖 Output")
+        
+        if result.get('error'):
+            st.error(f"❌ Error during inference: {result['error']}")
+        else:
+            # Display the LLM output
+            st.text_area("LLM Response", value=result['response'], height=150, disabled=True, key="llm_output")
+        
+        st.markdown("---")
+        
         # === CLASSIFICATION RESULTS ===
         st.subheader("📊 Classification Results")
         
@@ -155,10 +309,23 @@ def render_prompt_router_tab():
         # === PROBABILITY CHARTS ===
         st.subheader("📈 Complexity Probability Distribution")
         
-        probs = result['all_probs']
+        # Use final classification for consistency
+        final_complexity = result['complexity']
+        final_confidence = result['confidence']
+        
+        # Create probability distribution based on final classification
+        # The chosen class gets the confidence value, others share the remainder
+        remaining_confidence = (1.0 - final_confidence) / 2
+        final_probs = {
+            'small': remaining_confidence,
+            'medium': remaining_confidence,
+            'large': remaining_confidence
+        }
+        final_probs[final_complexity] = final_confidence
+        
         prob_df = pd.DataFrame({
-            'Complexity': list(probs.keys()),
-            'Probability': [v * 100 for v in probs.values()]
+            'Complexity': list(final_probs.keys()),
+            'Probability': [v * 100 for v in final_probs.values()]
         })
         
         # Create side-by-side layout for charts
@@ -250,22 +417,41 @@ def render_prompt_router_tab():
             st.markdown("---")
             st.subheader("💡 Why This Model Was Chosen")
             
-            model_explanation = f"""
-            **Model**: {result['model_name']} ({OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0):.1f} GB)
+            # Try LLM-generated explanation first
+            model_size = OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0)
+            llm_explanation = generate_llm_model_explanation(
+                model_name=result['model_name'],
+                model_size=model_size,
+                complexity=result['complexity'],
+                energy_mwh=result['energy_kwh']*1000,
+                energy_saved_pct=result['energy_saved_pct'],
+                co2_mg=result['co2_kg']*1000,
+                green_score=result['green_score'],
+                latency_ms=result['total_latency_ms'],
+                prompt=prompt,
+                model_id=result['routed_model']  # Use the same model that processed the prompt
+            )
             
-            **Complexity Match**: The prompt was classified as **{result['complexity'].upper()}** complexity, which matches perfectly with this model's capabilities.
-            
-            **Energy Efficiency**: This model consumed **{result['energy_kwh']*1000:.3f} mWh** of energy, saving **{result['energy_saved_pct']:.1f}%** compared to using the large baseline model.
-            
-            **Environmental Impact**: Generated **{result['co2_kg']*1000:.3f} mg** of CO₂ emissions with a Green Score of **{result['green_score']}/100**.
-            
-            **Performance**: Completed in **{result['total_latency_ms']:.0f} ms** total latency.
-            """
-            st.info(model_explanation)
+            if llm_explanation:
+                st.info(llm_explanation)
+            else:
+                # Fallback to hardcoded explanation if LLM fails
+                model_explanation = f"""
+                **Model**: {result['model_name']} ({model_size:.1f} GB)
+                
+                **Complexity Match**: The prompt was classified as **{result['complexity'].upper()}** complexity, which matches perfectly with this model's capabilities.
+                
+                **Energy Efficiency**: This model consumed **{result['energy_kwh']*1000:.3f} mWh** of energy, saving **{result['energy_saved_pct']:.1f}%** compared to using the large baseline model.
+                
+                **Environmental Impact**: Generated **{result['co2_kg']*1000:.3f} mg** of CO₂ emissions with a Green Score of **{result['green_score']}/100**.
+                
+                **Performance**: Completed in **{result['total_latency_ms']:.0f} ms** total latency.
+                """
+                st.info(model_explanation)
         
         # === ENERGY ANALYTICS ===
         st.markdown("---")
-        st.subheader("💚 Energy & Carbon Analytics")
+        st.subheader("💚")
         
         # Energy savings metrics
         col1, col2, col3 = st.columns(3)
@@ -373,6 +559,7 @@ def render_prompt_router_tab():
                                 comp_result = run_ollama_inference(model_id, prompt, timeout=timeout)
                                 comparison_results.append({
                                     'model_id': model_id,
+                                    'model': model_id,  # Add this for consistency
                                     'model_name': model_info.get('name', model_id),
                                     'size_gb': model_info.get('size', 0),
                                     'energy_kwh': comp_result.get('energy_kwh', 0),
@@ -384,6 +571,7 @@ def render_prompt_router_tab():
                             except Exception as e:
                                 comparison_results.append({
                                     'model_id': model_id,
+                                    'model': model_id,  # Add this for consistency
                                     'model_name': model_info.get('name', model_id),
                                     'size_gb': model_info.get('size', 0),
                                     'energy_kwh': 0,
@@ -444,26 +632,55 @@ def render_prompt_router_tab():
                         # Efficiency analysis
                         energy_diff = comp_result['energy_kwh'] - result['energy_kwh']
                         energy_diff_pct = (energy_diff / result['energy_kwh'] * 100) if result['energy_kwh'] > 0 else 0
+                        latency_diff = comp_result['latency_ms'] - result['inference_latency_ms']
+                        latency_diff_pct = (latency_diff / result['inference_latency_ms'] * 100) if result['inference_latency_ms'] > 0 else 0
+                        
+                        # Try LLM-generated explanation first
+                        optimal_size = OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0)
+                        llm_comparison = generate_llm_comparison_explanation(
+                            optimal_model_name=result['model_name'],
+                            optimal_size=optimal_size,
+                            optimal_energy=result['energy_kwh']*1000,
+                            optimal_latency=result['inference_latency_ms'],
+                            compared_model_name=comp_result['model_name'],
+                            compared_size=comp_result['size_gb'],
+                            compared_energy=comp_result['energy_kwh']*1000,
+                            compared_latency=comp_result['latency_ms'],
+                            complexity=result['complexity'],
+                            energy_diff=energy_diff*1000,
+                            energy_diff_pct=energy_diff_pct,
+                            latency_diff=latency_diff,
+                            latency_diff_pct=latency_diff_pct,
+                            compared_model_id=comp_result['model']  # Use the compared model itself
+                        )
                         
                         if energy_diff > 0:
-                            efficiency_analysis = f"""
-                            **⚠️ Less Efficient**: {comp_result['model_name']} consumed **{energy_diff*1000:.3f} mWh** ({energy_diff_pct:.1f}% more energy) than the optimal model.
-                            
-                            **Why Less Efficient**: 
-                            - Model size: {comp_result['size_gb']:.1f} GB vs optimal {OLLAMA_MODELS.get(result['routed_model'], {}).get('size', 0):.1f} GB
-                            - Latency: {comp_result['latency_ms']:.0f} ms vs optimal {result['inference_latency_ms']:.0f} ms
-                            - The prompt complexity ({result['complexity'].upper()}) doesn't require this model's capacity
-                            """
-                            st.warning(efficiency_analysis)
+                            if llm_comparison:
+                                st.warning(f"**⚠️ Less Efficient**: {comp_result['model_name']} consumed **{energy_diff*1000:.3f} mWh** ({energy_diff_pct:.1f}% more energy) than the optimal model.\n\n{llm_comparison}")
+                            else:
+                                # Fallback to hardcoded explanation
+                                efficiency_analysis = f"""
+                                **⚠️ Less Efficient**: {comp_result['model_name']} consumed **{energy_diff*1000:.3f} mWh** ({energy_diff_pct:.1f}% more energy) than the optimal model.
+                                
+                                **Why Less Efficient**: 
+                                - Model size: {comp_result['size_gb']:.1f} GB vs optimal {optimal_size:.1f} GB
+                                - Latency: {comp_result['latency_ms']:.0f} ms vs optimal {result['inference_latency_ms']:.0f} ms
+                                - The prompt complexity ({result['complexity'].upper()}) doesn't require this model's capacity
+                                """
+                                st.warning(efficiency_analysis)
                         else:
-                            efficiency_analysis = f"""
-                            **✅ Comparable Efficiency**: {comp_result['model_name']} performed similarly to the optimal model.
-                            
-                            **Analysis**: 
-                            - Energy difference: {abs(energy_diff)*1000:.3f} mWh
-                            - This model could be a viable alternative for similar complexity tasks
-                            """
-                            st.info(efficiency_analysis)
+                            if llm_comparison:
+                                st.info(f"**✅ Comparable Efficiency**: {comp_result['model_name']} performed similarly to the optimal model.\n\n{llm_comparison}")
+                            else:
+                                # Fallback to hardcoded explanation
+                                efficiency_analysis = f"""
+                                **✅ Comparable Efficiency**: {comp_result['model_name']} performed similarly to the optimal model.
+                                
+                                **Analysis**: 
+                                - Energy difference: {abs(energy_diff)*1000:.3f} mWh
+                                - This model could be a viable alternative for similar complexity tasks
+                                """
+                                st.info(efficiency_analysis)
         
         # === PERFORMANCE INSIGHTS ===
         st.subheader("💡 Performance Insights")
